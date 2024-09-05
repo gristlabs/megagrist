@@ -1,0 +1,90 @@
+#!/bin/bash
+
+# Env vars respected:
+# CLEAN_BUILD=1 -- Remove _build directory, for a clean build.
+# SKIP_TSC=1 -- Transpile typescript without type-checking.
+# WATCH=1 -- Run in watch mode.
+# SERVE=8000 -- Run in serve mode, on given port
+# PRODUCTION=1 -- Minify the output, into dist/prod; otherwise builds into dist/dev.
+
+# Settings for script robustness.
+set -euE -o pipefail
+trap 'echo "Exiting on interrupt"; exit 1' INT
+trap 'cleanup' EXIT
+
+BIN=node_modules/.bin
+TARGETS="lib test"
+
+build_typescript() {
+  # This builds typescript (and js, thanks to allowJs flag). Note that it does not
+  # clean stale files, unless you run with CLEAN_BUILD=1.
+
+  if [[ "${CLEAN_BUILD-}" = "1" ]]; then
+    # Remove _build and dist directories in case there's any stray material there.
+    log "Cleaning _build, dist directories"
+    rm -rf _build dist
+  fi
+
+  local esbuild_options="--bundle --sourcemap --target=es2017"
+  if [[ "${PRODUCTION-}" = "1" ]]; then
+    esbuild_options+=" --minify --outdir=dist/prod"
+  else
+    esbuild_options+=" --outdir=dist/dev"
+  fi
+
+  if [[ -n "${WATCH-}" ]]; then
+    log "Transpiling TypeScript in background"
+    esbuild --watch=forever ${esbuild_options} ${TARGETS} &
+    if [[ -z "${SKIP_TSC-}" ]]; then
+      log "Compiling TypeScript in background"
+      $BIN/tsc --build -w --preserveWatchOutput &
+    fi
+  elif [[ -n "${SERVE-}" ]]; then
+    log "Transpiling and serving TypeScript"
+    esbuild --watch=forever --serve=localhost:${SERVE} ${esbuild_options} ${TARGETS} &
+    if [[ -z "${SKIP_TSC-}" ]]; then
+      log "Compiling TypeScript in background"
+      $BIN/tsc --build -w --preserveWatchOutput &
+    fi
+  else
+    log "Transpiling TypeScript"
+    quiet esbuild ${esbuild_options} ${TARGETS}
+    if [[ -z "${SKIP_TSC-}" ]]; then
+      log "Compiling TypeScript"
+      quiet $BIN/tsc --build
+    fi
+  fi
+}
+
+log() {
+  echo $(date +"%H:%M:%S") "$@"
+}
+
+quiet() {
+  if [[ -z "${VERBOSE-}" ]]; then
+    local tmp_output=$(mktemp ${TMPDIR:-/tmp}/build_output.XXXXXX)
+    if ! "$@" >"$tmp_output" 2>&1; then
+      local status=$?
+      cat "$tmp_output"
+      rm "$tmp_output"
+      return $status
+    fi
+    rm "$tmp_output"
+  else
+    log "Running:" "$@"
+    "$@"
+    return $?
+  fi
+}
+
+cleanup() {
+  background_jobs=`jobs -pr`
+  background_jobs=`echo $background_jobs`   # convert newlines to spaces
+  if [[ -n "$background_jobs" ]]; then
+    log "Stopping background jobs $background_jobs"
+    kill $background_jobs 2>/dev/null
+  fi
+}
+
+build_typescript
+wait

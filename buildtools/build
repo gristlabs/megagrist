@@ -13,7 +13,7 @@ trap 'echo "Exiting on interrupt"; exit 1' INT
 trap 'cleanup' EXIT
 
 BIN=node_modules/.bin
-TARGETS="lib test"
+TARGETS="lib/**/*.ts"
 
 build_typescript() {
   # This builds typescript (and js, thanks to allowJs flag). Note that it does not
@@ -25,7 +25,7 @@ build_typescript() {
     rm -rf _build dist
   fi
 
-  local esbuild_options="--bundle --sourcemap --target=es2017"
+  local esbuild_options="--sourcemap --platform=node --target=es2020"
   if [[ "${PRODUCTION-}" = "1" ]]; then
     esbuild_options+=" --minify --outdir=dist/prod"
   else
@@ -34,21 +34,21 @@ build_typescript() {
 
   if [[ -n "${WATCH-}" ]]; then
     log "Transpiling TypeScript in background"
-    esbuild --watch=forever ${esbuild_options} ${TARGETS} &
+    $BIN/esbuild --watch=forever ${esbuild_options} ${TARGETS} &
     if [[ -z "${SKIP_TSC-}" ]]; then
       log "Compiling TypeScript in background"
       $BIN/tsc --build -w --preserveWatchOutput &
     fi
   elif [[ -n "${SERVE-}" ]]; then
     log "Transpiling and serving TypeScript"
-    esbuild --watch=forever --serve=localhost:${SERVE} ${esbuild_options} ${TARGETS} &
+    $BIN/esbuild --watch=forever --serve=localhost:${SERVE} ${esbuild_options} ${TARGETS} &
     if [[ -z "${SKIP_TSC-}" ]]; then
       log "Compiling TypeScript in background"
       $BIN/tsc --build -w --preserveWatchOutput &
     fi
   else
     log "Transpiling TypeScript"
-    quiet esbuild ${esbuild_options} ${TARGETS}
+    quiet $BIN/esbuild ${esbuild_options} ${TARGETS}
     if [[ -z "${SKIP_TSC-}" ]]; then
       log "Compiling TypeScript"
       quiet $BIN/tsc --build

@@ -1,5 +1,5 @@
 {
-  "extends": "../buildtools/tsconfig-base.json",
+  "extends": "./buildtools/tsconfig-base.json",
   "include": [
     "lib/**/*",
     "test/**/*"

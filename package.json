@@ -1,7 +1,7 @@
 {
   "name": "megagrist",
-  "version": "1.0.0",
-  "description": "",
+  "version": "0.1.0",
+  "description": "Shiny and awesome data engine for Grist",
   "type": "module",
   "scripts": {
     "build": "PRODUCTION=1 ./buildtools/build",
@@ -9,8 +9,10 @@
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "author": {
+    "name": "Grist Labs Inc.",
+    "email": "info@getgrist.com"
+  },
   "dependencies": {
     "better-sqlite3": "^11.3.0",
     "source-map-support": "^0.5.21"

@@ -14,10 +14,11 @@ export class DataEngine implements IDataEngine {
   public async fetchQuery(query: Query): Promise<QueryResult> {
     const bindParams = new BindParams();
     const sql = sqlSelectFromQuery(query, bindParams);
+    // console.warn("RUNNING SQL", sql);
     const stmt = this._db.prepare(sql);
     return this._db.transaction(() => {
       const rows = stmt.raw().all(bindParams.getParams()) as CellValue[][];
-      console.warn("RESULT", rows);
+      // console.warn("RESULT", rows);
       const queryResult: QueryResult = {
         tableId: query.tableId,
         tableData: { id: [] },
@@ -88,7 +89,7 @@ function sqlSelectFromQuery(query: Query, params: BindParams): string {
   const cursorExpr = query.cursor !== undefined ? sqlExprFromCursor(query.sort, query.cursor, params) : null;
   const whereExpr = cursorExpr ? `(${filterExpr}) AND (${cursorExpr})` : filterExpr;
   const orderBy = query.sort !== undefined ? `ORDER BY ${sqlOrderByFromSort(query.sort)}` : '';
-  const limit = query.limit !== undefined ? `LIMIT ${query.limit}` : null;
+  const limit = query.limit !== undefined ? `LIMIT ${query.limit}` : '';
   return `SELECT * FROM ${quoteIdent(query.tableId)} WHERE ${whereExpr} ${orderBy} ${limit}`;
 }
 

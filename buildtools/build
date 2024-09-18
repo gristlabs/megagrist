@@ -13,7 +13,7 @@ trap 'echo "Exiting on interrupt"; exit 1' INT
 trap 'cleanup' EXIT
 
 BIN=node_modules/.bin
-TARGETS="lib/**/*.ts"
+TARGETS="lib/**/*.ts test/**/*.ts"
 
 build_typescript() {
   # This builds typescript (and js, thanks to allowJs flag). Note that it does not
@@ -25,7 +25,7 @@ build_typescript() {
     rm -rf _build dist
   fi
 
-  local esbuild_options="--sourcemap --platform=node --target=es2020"
+  local esbuild_options="--sourcemap --platform=node --target=es2020 --format=cjs"
   if [[ "${PRODUCTION-}" = "1" ]]; then
     esbuild_options+=" --minify --outdir=dist/prod"
   else

@@ -2,11 +2,10 @@
   "name": "megagrist",
   "version": "0.1.0",
   "description": "Shiny and awesome data engine for Grist",
-  "type": "module",
   "scripts": {
     "build": "PRODUCTION=1 ./buildtools/build",
     "watch": "WATCH=1 ./buildtools/build",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "./buildtools/build && mocha dist/dev/test/**/*.js"
   },
   "keywords": [],
   "author": {
@@ -19,12 +18,19 @@
   },
   "devDependencies": {
     "@babel/eslint-parser": "^7.25.1",
+    "@eslint/eslintrc": "^3.1.0",
+    "@stylistic/eslint-plugin": "^2.8.0",
     "@types/better-sqlite3": "^7.6.11",
+    "@types/chai": "^4.3.19",
+    "@types/mocha": "^10.0.8",
     "@types/node": "^22.5.4",
     "@typescript-eslint/eslint-plugin": "^8.4.0",
+    "chai": "^4.5.0",
     "esbuild": "^0.23.1",
-    "eslint": "^9.9.1",
-    "typescript": "^5.5.4",
+    "eslint": "~8",
+    "globals": "^15.9.0",
+    "mocha": "^10.7.3",
+    "typescript": "<5.6.0",
     "typescript-eslint-language-service": "^5.0.5"
   }
 }

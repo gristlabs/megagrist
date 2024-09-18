@@ -18,6 +18,7 @@ describe('Test1', function() {
     const db: SqliteDatabase.Database = SqliteDatabase(`${testDir}/scenario1.grist`, {
       verbose: process.env.VERBOSE ? console.log : undefined
     });
+    db.exec("PRAGMA journal_mode=WAL");
     const dataEngine = new DataEngine(db);
 
     // Run actions to create a table.
@@ -43,7 +44,7 @@ describe('Test1', function() {
             Name: Array.from(array, (x, i) => `Bob #${offset + i}`),
             Email: Array.from(array, (x, i) => `bob${offset + i}@example.com`),
             DOB: Array.from(array, (x, i) => 1000000000 + (offset + i) * 86400),
-            Age: Array.from(array, (x, i) => (offset + i) / 360),
+            Age: Array.from(array, (x, i) => Math.floor(i / 10)),
           }
         ];
         await dataEngine.applyActions({actions: [addAction]});
@@ -52,16 +53,18 @@ describe('Test1', function() {
 
     // Run query to read this table.
     const result1 = await withTiming("query table start", () => {
-      const filters: QueryFilters = ['Lt', ['Name', 'Age'], ['Const', 10]];
+      const filters: QueryFilters = ['Lt', ['Name', 'Age'], ['Const', 1]];
       return dataEngine.fetchQuery({tableId: 'Table1', filters});
     });
-    assert.lengthOf(result1.tableData.id, 3600);
+    assert.lengthOf(result1.tableData.id, 10000);
+    assert.isTrue(result1.tableData.Age.every(age => (age === 0)));
 
     const result2 = await withTiming("query table end", () => {
-      const filters: QueryFilters = ['GtE', ['Name', 'Age'], ['Const', (1000000 - 3600) / 360]];
+      const filters: QueryFilters = ['GtE', ['Name', 'Age'], ['Const', 99]];
       return dataEngine.fetchQuery({tableId: 'Table1', filters});
     });
-    assert.lengthOf(result2.tableData.id, 3600);
+    assert.lengthOf(result2.tableData.id, 10000);
+    assert.isTrue(result2.tableData.Age.every(age => (age === 99)));
   });
 });
 

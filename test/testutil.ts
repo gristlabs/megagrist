@@ -5,6 +5,9 @@ import path from 'path';
 // alternative to including `"types": ["mocha"]` into tsconfig.json.
 import 'mocha';
 
+// Enable source-map-support for stack traces.
+import 'source-map-support/register';
+
 export async function createTestDir(suiteName: string): Promise<string> {
   const tmpRootDir = process.env.TESTDIR || "./_testoutputs";
   const testDir = path.join(tmpRootDir, suiteName);

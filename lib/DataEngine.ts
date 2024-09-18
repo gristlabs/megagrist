@@ -184,24 +184,28 @@ class DocActionApplier {
     return this[action[0]](action as any);
   }
 
+  // TODO For all data operations, including UPDATE, there are ways to deal with multiple rows
+  // in one statement. With batcing, could run many times fewer statements. Question is whether
+  // it's actually faster. For example:
+  //    WITH u(id, col1, col2) AS (VALUES (?, ?, ?), (?, ?, ?), ...)
+  //    UPDATE tableId AS t SET (t.col1, t.col2) = (u.col1, u.col2)
+  //    FROM u WHERE t.id = u.id;
+  //
+  // Experiment with batching INSERTs (to max of 900 params) showed a performance improvement of
+  // about 20%, which is nice but may not be worth the added complexity.
+
   public BulkAddRecord([_, tableId, rowIds, colValues]: DocAction.BulkAddRecord) {
     if (rowIds.length === 0) { return; }
     const cols = ['id', ...Object.keys(colValues)];
-    const values = [rowIds, ...Object.values(colValues)];
     const placeholders = cols.map(c => '?');
     const stmt = this._db.prepare(`INSERT INTO ${quoteIdent(tableId)} (${cols.join(', ')}) VALUES (${placeholders})`);
+    const values = Object.values(colValues);
     for (let i = 0; i < rowIds.length; i++) {
-      stmt.run(values.map(col => col[i]));
+      stmt.run(rowIds[i], values.map(col => col[i]));
     }
   }
 
   public BulkUpdateRecord([_, tableId, rowIds, colValues]: DocAction.BulkUpdateRecord) {
-    // TODO For all data operations, including UPDATE, there are ways to deal with multiple rows
-    // in one statement. With batcing, could run many times fewer statements. Question is whether
-    // it's actually faster. For example:
-    //    WITH u(id, col1, col2) AS (VALUES (?, ?, ?), (?, ?, ?), ...)
-    //    UPDATE tableId AS t SET (t.col1, t.col2) = (u.col1, u.col2)
-    //    FROM u WHERE t.id = u.id;
     const cols = Object.keys(colValues);
     if (rowIds.length === 0 || cols.length === 0) { return; }
 

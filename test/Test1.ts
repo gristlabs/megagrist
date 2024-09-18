@@ -51,15 +51,18 @@ describe('Test1', function() {
       }
     });
 
-    // Run query to read this table.
-    const result1 = await withTiming("query table start", () => {
-      const filters: QueryFilters = ['Lt', ['Name', 'Age'], ['Const', 1]];
-      return dataEngine.fetchQuery({tableId: 'Table1', filters});
+    const db2: SqliteDatabase.Database = SqliteDatabase(`${testDir}/scenario1.grist`, {
+      verbose: process.env.VERBOSE ? console.log : undefined
     });
-    assert.lengthOf(result1.tableData.id, 10000);
-    assert.isTrue(result1.tableData.Age.every(age => (age === 0)));
+    const dataEngine2 = new DataEngine(db2);
+    await runQueries("same connection", dataEngine);
+    await runQueries("new connection", dataEngine2);
 
-    const result2 = await withTiming("query table end", () => {
+  });
+
+  async function runQueries(desc: string, dataEngine: DataEngine) {
+    // Run query to read this table.
+    const result2 = await withTiming(`${desc}: query table 10k`, () => {
       const filters: QueryFilters = ['GtE', ['Name', 'Age'], ['Const', 99]];
       return dataEngine.fetchQuery({tableId: 'Table1', filters});
     });
@@ -67,7 +70,7 @@ describe('Test1', function() {
     assert.isTrue(result2.tableData.Age.every(age => (age === 99)));
 
     // Run queries to scan through the entire table.
-    await withTiming("scan table", async () => {
+    await withTiming(`${desc}: scan table`, async () => {
       let cursor: QueryCursor|undefined;
       let prevResult: QueryResult|undefined;
       while (true) {    // eslint-disable-line no-constant-condition
@@ -80,7 +83,7 @@ describe('Test1', function() {
         cursor = ["after", [last(result.tableData.id)]];
       }
     });
-  });
+  }
 });
 
 function last<T>(arr: T[]): T { return arr[arr.length - 1]; }

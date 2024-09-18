@@ -1,6 +1,6 @@
 import {DataEngine} from '../lib/DataEngine';
 import {DocAction} from '../lib/DocActions';
-import {QueryFilters} from '../lib/types';
+import {QueryCursor, QueryFilters, QueryResult} from '../lib/types';
 import {createTestDir} from './testutil';
 import {assert} from 'chai';
 import SqliteDatabase from 'better-sqlite3';
@@ -65,8 +65,25 @@ describe('Test1', function() {
     });
     assert.lengthOf(result2.tableData.id, 10000);
     assert.isTrue(result2.tableData.Age.every(age => (age === 99)));
+
+    // Run queries to scan through the entire table.
+    await withTiming("scan table", async () => {
+      let cursor: QueryCursor|undefined;
+      let prevResult: QueryResult|undefined;
+      while (true) {    // eslint-disable-line no-constant-condition
+        const result = await dataEngine.fetchQuery({tableId: 'Table1', sort: ['id'], cursor, limit: 1000});
+        if (!result.tableData.id.length) {
+          break;
+        }
+        assert.equal(result.tableData.id[0], prevResult ? last(prevResult.tableData.id) + 1 : 1);
+        prevResult = result;
+        cursor = ["after", [last(result.tableData.id)]];
+      }
+    });
   });
 });
+
+function last<T>(arr: T[]): T { return arr[arr.length - 1]; }
 
 async function withTiming<T>(desc: string, func: () => Promise<T>): Promise<T> {
   const start = Date.now();

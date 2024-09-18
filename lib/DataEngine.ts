@@ -85,7 +85,7 @@ class BindParams {
 }
 
 function sqlSelectFromQuery(query: Query, params: BindParams): string {
-  const filterExpr = sqlExprFromFilters(query.filters, params);
+  const filterExpr = query.filters ? sqlExprFromFilters(query.filters, params) : '1';
   const cursorExpr = query.cursor !== undefined ? sqlExprFromCursor(query.sort, query.cursor, params) : null;
   const whereExpr = cursorExpr ? `(${filterExpr}) AND (${cursorExpr})` : filterExpr;
   const orderBy = query.sort !== undefined ? `ORDER BY ${sqlOrderByFromSort(query.sort)}` : '';
@@ -153,16 +153,16 @@ function sqlExprFromCursor(sort: OrderByClause|undefined, cursor: QueryCursor, p
   }
   const colSpecs = sort;
   function compileNode(index: number): string {
-    if (index >= cursor.length) {
-      return 'TRUE';
+    if (index >= cursorValues.length) {
+      return 'FALSE';
     }
-    const next = compileNode(index + 1);
+    const next = (index + 1 < cursorValues.length) ? compileNode(index + 1) : null;
     const colSpec = colSpecs[index];
     const isDesc = colSpec.startsWith('-');
     const colId = isDesc ? colSpec.slice(1) : colSpec;
-    const op = isDesc ? '>' : '<';
+    const op = isDesc ? '<' : '>';
     const p = params.addParam(cursorValues[index]);
-    return `${quoteIdent(colId)} ${op} ${p} OR (${quoteIdent(colId)} = ${p} AND (${next}))`;
+    return `${quoteIdent(colId)} ${op} ${p}` + (next ? ` OR (${quoteIdent(colId)} = ${p} AND (${next}))` : '');
   }
   return compileNode(0);
 }

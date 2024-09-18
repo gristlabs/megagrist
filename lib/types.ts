@@ -33,7 +33,7 @@ export type QueryCursorType = 'after'|'before';
  */
 export interface Query {
   tableId: string;
-  filters: QueryFilters;
+  filters?: QueryFilters;
   sort?: OrderByClause;
   limit?: number;
   cursor?: QueryCursor;     // Which value to start returning results from.

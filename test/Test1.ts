@@ -1,7 +1,8 @@
 import {DataEngine} from '../lib/DataEngine';
+import {Deps as StoreDocActionDeps} from '../lib/StoreDocAction';
 import {QueryCursor, QueryFilters, QueryResult} from '../lib/types';
 import * as sample1 from './sample1';
-import {createTestDir, withTiming} from './testutil';
+import {changePropertyForTest, createTestDir, withTiming} from './testutil';
 import {assert} from 'chai';
 import SqliteDatabase from 'better-sqlite3';
 
@@ -13,30 +14,36 @@ describe('Test1', function() {
     testDir = await createTestDir('Test1');
   });
 
-  it('scenario 1', async function() {
-    // Create database in a tmp directory.
-    const db: SqliteDatabase.Database = SqliteDatabase(`${testDir}/scenario1.grist`, {
-      verbose: process.env.VERBOSE ? console.log : undefined
+  for (const virtualTables of [false, true]) {
+    describe(`with USE_VIRTUAL_TABLES=${virtualTables}`, function() {
+      changePropertyForTest(StoreDocActionDeps, 'USE_VIRTUAL_TABLES', virtualTables);
+
+      it('scenario 1', async function() {
+        const dbPath = `${testDir}/scenario1-${virtualTables}.grist`;
+        // Create database in a tmp directory.
+        const db: SqliteDatabase.Database = SqliteDatabase(dbPath, {
+          verbose: process.env.VERBOSE ? console.log : undefined
+        });
+        db.exec("PRAGMA journal_mode=WAL");
+        const dataEngine = new DataEngine(db);
+
+        // Run actions to create a table.
+        await withTiming("create table", () =>
+          sample1.createTable(dataEngine, 'Table1'));
+
+        // Run actions to create 1m rows in this table.
+        await withTiming("populate table", () =>
+          sample1.populateTable(dataEngine, 'Table1', 1000, 1000));
+
+        const db2: SqliteDatabase.Database = SqliteDatabase(dbPath, {
+          verbose: process.env.VERBOSE ? console.log : undefined
+        });
+        const dataEngine2 = new DataEngine(db2);
+        await runQueries("same connection", dataEngine);
+        await runQueries("new connection", dataEngine2);
+      });
     });
-    db.exec("PRAGMA journal_mode=WAL");
-    const dataEngine = new DataEngine(db);
-
-    // Run actions to create a table.
-    await withTiming("create table", () =>
-      sample1.createTable(dataEngine, 'Table1'));
-
-    // Run actions to create 1m rows in this table.
-    await withTiming("populate table", () =>
-      sample1.populateTable(dataEngine, 'Table1', 1000, 1000));
-
-    const db2: SqliteDatabase.Database = SqliteDatabase(`${testDir}/scenario1.grist`, {
-      verbose: process.env.VERBOSE ? console.log : undefined
-    });
-    const dataEngine2 = new DataEngine(db2);
-    await runQueries("same connection", dataEngine);
-    await runQueries("new connection", dataEngine2);
-
-  });
+  }
 
   async function runQueries(desc: string, dataEngine: DataEngine) {
     // Run query to read this table.

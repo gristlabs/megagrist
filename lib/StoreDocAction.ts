@@ -5,7 +5,7 @@ import SqliteDatabase from 'better-sqlite3';
 export const Deps = {
   // TODO: this is for testing and timing, to control whether to try the "virtual tables"
   // implementation of bulk actions.
-  ACTIONS_USE_VIRTUAL_TABLES: false,
+  USE_VIRTUAL_TABLES: false,
 
   // The name of the column containing rowIds. Grist normally always uses "id". We treat it as
   // configurable to make it easier to support tables with a different column for rowId.
@@ -15,7 +15,7 @@ export const Deps = {
 export class StoreDocAction {
   constructor(private _db: SqliteDatabase.Database) {}
 
-  public apply(action: DocAction) {
+  public store(action: DocAction) {
     return this[action[0]](action as any);
   }
 
@@ -37,10 +37,12 @@ export class StoreDocAction {
   public BulkAddRecord([_, tableId, rowIds, colValues]: DocAction.BulkAddRecord) {
     if (rowIds.length === 0) { return; }
     const cols = [Deps.ROW_ID_COL, ...Object.keys(colValues)].map(quoteIdent);
-    if (Deps.ACTIONS_USE_VIRTUAL_TABLES) {
+    if (Deps.USE_VIRTUAL_TABLES) {
+      // The virtual table created this way is only visible in the connection where it's created.
+      // better-sqlite3 doesn't provide a way to drop it (SQLite does, by passing a null module to
+      // sqlite3_create_module_v2). It should be safe to reuse the virtual table name.
       this.makeVirtualTableForAction('tmp_bulk_action', rowIds, colValues);
       this._db.prepare(`INSERT INTO ${quoteIdent(tableId)} (${cols.join(', ')}) SELECT * FROM tmp_bulk_action`).run();
-      this._db.prepare(`DROP TABLE IF EXISTS tmp_bulk_action`).run();
     } else {
       const placeholders = cols.map(c => '?');
       const stmt = this._db.prepare(`INSERT INTO ${quoteIdent(tableId)} (${cols.join(', ')}) VALUES (${placeholders})`);

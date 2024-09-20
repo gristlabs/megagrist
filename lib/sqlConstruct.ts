@@ -15,8 +15,9 @@ import {quoteIdent} from './sqlUtil';
  */
 export class BindParams {
   private _next = 1;
-  // TODO: No need for named values since they are generated anyway. Use ?NNN syntax instead and
-  // a plain array.
+  // In theory, we could skip named values and use ?NNN syntax. In practice, better-sqlite3
+  // doesn't support ?NNN syntax properly because it's hard to reconcile all bind options with its
+  // interface. See https://github.com/WiseLibs/better-sqlite3/issues/576.
   private _params: {[id: string]: CellValue} = {};
 
   public getParams() { return this._params; }

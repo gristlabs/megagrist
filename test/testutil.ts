@@ -34,3 +34,20 @@ export async function withTiming<T>(desc: string, func: () => Promise<T>): Promi
     console.log(`${desc}: took ${end - start}ms`);
   }
 }
+
+/**
+ * Add before()/after() callbacks to set obj[key] to newValue before the test, and restore the
+ * previous value after.
+ */
+export function changePropertyForTest<T, P extends keyof T>(obj: T, key: P, newValue: T[P]) {
+  let previous: T[P];
+
+  before(() => {
+    previous = obj[key];
+    obj[key] = newValue;
+  });
+
+  after(() => {
+    obj[key] = previous;
+  });
+}

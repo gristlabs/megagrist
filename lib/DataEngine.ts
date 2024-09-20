@@ -15,7 +15,7 @@ export class DataEngine implements IDataEngine {
   public async fetchQuery(query: Query): Promise<QueryResult> {
     const bindParams = new BindParams();
     const sql = sqlSelectFromQuery(query, bindParams);
-    // console.warn("RUNNING SQL", sql);
+    // console.warn("RUNNING SQL", sql, bindParams.getParams());
     const stmt = this._db.prepare(sql);
     return this._db.transaction(() => {
       const rows = stmt.raw().all(bindParams.getParams()) as CellValue[][];
@@ -56,10 +56,10 @@ export class DataEngine implements IDataEngine {
       // transaction to ensure we are seeing a consistent view of DB and no other connection
       // attempts to write meanwhile.
 
-      const docActionApplier = new StoreDocAction(this._db);
+      const storeDocAction = new StoreDocAction(this._db);
       const results: unknown[] = [];
       for (const action of actionSet.actions) {
-        results.push(docActionApplier.apply(action));
+        results.push(storeDocAction.store(action));
       }
       // TODO For each subscription, query and queue the data to send to it.
       // NOTE: We could use a separate DB connection with an open read transaction to avoid

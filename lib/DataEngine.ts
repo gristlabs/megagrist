@@ -1,4 +1,4 @@
-import {ActionSet, ApplyResultSet, Query, QueryResult, QuerySubId} from './types';
+import {ActionSet, ApplyResultSet, Query, QueryResult, QueryResultStreaming, QuerySubId} from './types';
 import {CellValue} from './DocActions';
 import {IDataEngine, QuerySubCallback} from './IDataEngine';
 import {BindParams, sqlSelectFromQuery} from './sqlConstruct';
@@ -30,6 +30,81 @@ export class DataEngine implements IDataEngine {
       }
       return queryResult;
     })();
+  }
+
+  // TODO we need to come up with how to do streaming fetches over a network.
+  public fetchQueryStreaming(query: Query, timeoutMs: number): QueryResultStreaming {
+    const bindParams = new BindParams();
+    const sql = sqlSelectFromQuery(query, bindParams);
+    // console.warn("RUNNING SQL", sql, bindParams.getParams());
+
+    // Note the convoluted flow here: we are returning an object, which includes a generator.
+    // Caller is expected to iterate through the generator. This iteration happens inside a DB
+    // transaction, so we keep a transaction going. In WAL mode this should not prevent other
+    // reads or writes in parallel (on other connections!), but does prevent checkpointing. So
+    // there is also a timeout. If the reader of the genrator doesn't finish within timeoutMs, the
+    // generator will throw an exception, and end the transaction.
+    // TODO this flow, especially error handling, needs careful testing.
+
+    const db = this._db;
+
+    let abortTimer: ReturnType<typeof setTimeout>|undefined;
+    let iterator: IterableIterator<CellValue[]>|undefined;
+
+    const cleanup = () => {
+      if (abortTimer) {
+        clearTimeout(abortTimer);
+      }
+      iterator?.return?.();
+      db.exec('ROLLBACK');
+    };
+
+    db.exec('BEGIN');
+    try {
+      let timedOut = false;
+      const onTimeout = () => {
+        timedOut = true;
+        cleanup();
+      };
+      abortTimer = setTimeout(onTimeout, timeoutMs);
+
+      // This may be needed to force a snapshot to be taken (not sure). More sensibly, this may be
+      // a good time to get actionNum (to identify the current state of the DB).
+      // db.exec('SELECT 1');
+
+      const stmt = this._db.prepare<unknown[], CellValue[]>(sql);
+
+      function *generateRows() {
+        try {
+          iterator = stmt.raw().iterate(bindParams.getParams());
+          for (const row of iterator) {
+            yield row;
+            if (timedOut) {
+              throw new Error("Timed out");
+            }
+          }
+        } finally {
+          if (!timedOut) {
+            cleanup();
+          }
+        }
+      }
+
+      const colIds = stmt.columns().map(c => c.name);
+
+      const queryResult: QueryResultStreaming = {
+        tableId: query.tableId,
+        colIds,
+        actionNum: 0,       // TODO
+        rows: generateRows(),
+      };
+      return queryResult;
+    } catch (e) {
+      // This handles the case when we get an exception before returning to the caller, e.g. if
+      // we constructed invalid SQL.
+      cleanup();
+      throw e;
+    }
   }
 
   // See querySubscribe for requirements on unsubscribing.

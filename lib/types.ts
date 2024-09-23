@@ -60,6 +60,22 @@ export interface QueryResult {
   // attachments?: TableColValues;
 }
 
+export interface QueryResultStreaming {
+  tableId: string;
+  colIds: string[];
+  rows: Iterable<CellValue[]>;
+
+  // Each state of the database is identified by an actionNum. Each change increments it. (Some
+  // merged changes may increment it by more than 1.)
+  actionNum: number;
+
+  // If subscribed at the same time, the result may include a subscription ID.
+  subId?: QuerySubId;
+
+  // It may also be appropriate to include attachment metadata referred to in tableData.
+  // attachments?: TableColValues;
+}
+
 /**
  * Represents changes sent by a user, as well as processed changes to apply to the database and
  * broadcast to subscribers.

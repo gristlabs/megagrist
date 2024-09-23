@@ -19,8 +19,8 @@ describe('Test1', function() {
       changePropertyForTest(StoreDocActionDeps, 'USE_VIRTUAL_TABLES', virtualTables);
 
       it('scenario 1', async function() {
-        const dbPath = `${testDir}/scenario1-${virtualTables}.grist`;
         // Create database in a tmp directory.
+        const dbPath = `${testDir}/scenario1-${virtualTables}.grist`;
         const db: SqliteDatabase.Database = SqliteDatabase(dbPath, {
           verbose: process.env.VERBOSE ? console.log : undefined
         });

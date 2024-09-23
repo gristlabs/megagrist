@@ -5,7 +5,7 @@
   "scripts": {
     "build": "PRODUCTION=1 ./buildtools/build",
     "watch": "WATCH=1 ./buildtools/build",
-    "test": "./buildtools/build && mocha dist/dev/test/**/*.js"
+    "test": "./buildtools/build && mocha dist/dev/test/**/*.js ${DEBUG:+'-b'} -g \"${GREP_TESTS}\" -n expose-gc"
   },
   "keywords": [],
   "author": {

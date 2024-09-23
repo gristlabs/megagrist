@@ -82,7 +82,7 @@ describe('Test2', function() {
   async function readDBStreaming(dbPath: string, memory: Memory, limit?: number) {
     const db2: SqliteDatabase.Database = SqliteDatabase(dbPath, {});
     const dataEngine2 = new DataEngine(db2);
-    const result = dataEngine2.fetchQueryStreaming({tableId: 'Table1', sort: ['id'], limit}, 60_000);
+    const result = await dataEngine2.fetchQueryStreaming({tableId: 'Table1', sort: ['id'], limit}, 60_000);
     let count = 0;
     let sumRowIds = 0;
     for (const row of result.rows) {

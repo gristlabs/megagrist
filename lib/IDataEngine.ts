@@ -1,10 +1,12 @@
-import {ActionSet, ApplyResultSet, Query, QueryResult, QuerySubId} from './types';
+import {ActionSet, ApplyResultSet, Query, QueryResult, QueryResultStreaming, QuerySubId} from './types';
 
 /**
  * This defines the typescript interface for the data engine.
  */
 export interface IDataEngine {
   fetchQuery(query: Query): Promise<QueryResult>;
+
+  fetchQueryStreaming(query: Query, timeoutMs: number): Promise<QueryResultStreaming>;
 
   // See querySubscribe for requirements on unsubscribing.
   fetchAndSubscribe(query: Query, callback: QuerySubCallback): Promise<QueryResult>;

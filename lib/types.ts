@@ -42,12 +42,8 @@ export interface Query {
 // Identifier for a subscription, which can be used to unsubscribe.
 export type QuerySubId = number;
 
-/**
- * Results of fetching a table. Includes the table data you would expect.
- */
-export interface QueryResult {
+export interface QueryResultCommon {
   tableId: string;
-  tableData: TableColValues;
 
   // Each state of the database is identified by an actionNum. Each change increments it. (Some
   // merged changes may increment it by more than 1.)
@@ -60,20 +56,19 @@ export interface QueryResult {
   // attachments?: TableColValues;
 }
 
-export interface QueryResultStreaming {
-  tableId: string;
+/**
+ * Results of fetching a table. Includes the table data you would expect.
+ */
+export interface QueryResult extends QueryResultCommon {
+  tableData: TableColValues;
+}
+
+/**
+ * Results of fetching a table, with a streaming interface.
+ */
+export interface QueryResultStreaming extends QueryResultCommon {
   colIds: string[];
   rows: Iterable<CellValue[]>;
-
-  // Each state of the database is identified by an actionNum. Each change increments it. (Some
-  // merged changes may increment it by more than 1.)
-  actionNum: number;
-
-  // If subscribed at the same time, the result may include a subscription ID.
-  subId?: QuerySubId;
-
-  // It may also be appropriate to include attachment metadata referred to in tableData.
-  // attachments?: TableColValues;
 }
 
 /**

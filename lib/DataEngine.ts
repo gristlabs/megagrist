@@ -33,7 +33,7 @@ export class DataEngine implements IDataEngine {
   }
 
   // TODO we need to come up with how to do streaming fetches over a network.
-  public fetchQueryStreaming(query: Query, timeoutMs: number): QueryResultStreaming {
+  public async fetchQueryStreaming(query: Query, timeoutMs: number): Promise<QueryResultStreaming> {
     const bindParams = new BindParams();
     const sql = sqlSelectFromQuery(query, bindParams);
     // console.warn("RUNNING SQL", sql, bindParams.getParams());

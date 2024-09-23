@@ -4,10 +4,10 @@
 
 import {CellValue, DocAction, TableColValues} from './DocActions';
 
-// TODO Filters could be specified in any form that can be safely converted to SQL WHERE clause
-// (doesn't need to be limited to an AND of column-based filters as before). Here, the idea is to
-// use "ParsedPredicateFormula" from Grist's app/common/PredicateFormula.ts.
-// => Consider "jsonlogic", which is multi-language, but no SQL.
+// Filters could be specified in any form that can be safely converted to SQL WHERE clause
+// (doesn't need to be limited to an AND of column-based filters as before). Here, we use
+// "ParsedPredicateFormula" from Grist's app/common/PredicateFormula.ts, whose added benefit is
+// that it is also used to express access rules conditions.
 export type ParsedPredicateFormula = [string, ...(ParsedPredicateFormula|CellValue)[]];
 export type QueryFilters = ParsedPredicateFormula;
 

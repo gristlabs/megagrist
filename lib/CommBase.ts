@@ -1,78 +1,44 @@
-/**
- * Here we define a little protocol to support Rpc-like calls with streaming.
- * For example, we want to be able to say:
- *    const api = getClientForMyApi(...);
- *    const [response, iterable] = await api.myMethod(...args);
- *    for await (const item of iterable) {
- *      process(item);
- *    }
- */
-interface IMessage {
-  mtype: MsgType;
-  reqId: number;
-  data: unknown;
+import {IMessage, MsgType, StreamingData, StreamingRpc, StreamingRpcOptions} from './StreamingRpc';
+
+export class SendError extends Error {
+  constructor(public origError: Error) {
+    super(origError.message);
+  }
 }
 
-export enum MsgType {
-  Call,
-  RespPart,   // Used when more parts are expected in the response.
-  RespDone,   // Used for the last part of the response, including responses
-              // without a streaming portion.
-  RespErr,
+// We don't care about the actual types here, but define unique types to get the strongest type
+// checking internally within this module.
+interface UniqueTypes {
+  readonly Value: unique symbol;
+  readonly Chunk: unique symbol;
 }
+
+type StreamingDataChecked = StreamingData<UniqueTypes["Value"], UniqueTypes["Chunk"]>;
 
 interface CallObj {
   reqId: number;
-  // We keep "resolve" callbacks for each promise, omitting "reject" for simplicity, since we can
-  // always reject by calling resolve() with a rejected promise.
-  callResolve?: (data: Response | Promise<Response>) => void;
-  queuedChunks?: ResponseChunkIter[];
-  queuedCallbacks?: Array<(chunk: ResponseChunkIter | Promise<ResponseChunkIter>) => void>;
+  resolve: (data: StreamingDataChecked | Promise<StreamingDataChecked>) => void;
 }
 
-interface Response<Result = unknown, Chunk = ResponseChunk> {
-  data: Result;
-  chunks?: AsyncIterable<Chunk>;
-}
-
-export const Dummy = Symbol('Dummy');
-type ResponseChunk = typeof Dummy;
-
-type ResponseChunkIter = IteratorResult<ResponseChunk, undefined>;
-
-interface Sender {
-  sendMessage(msg: IMessage): Promise<void>;
-
-  // If sending should be paused because it is filling up a buffer which needs to drain, returns a
-  // promise for when sending may resume. Otherwise returns null;
-  waitToDrain(): null|Promise<void>;
-}
-
-// TODO
-function checkData(data: unknown): ResponseChunk {
-  return data as ResponseChunk;
-}
-// TODO
-function checkError(data: unknown): Error {
-  return data as Error;
-}
-
-export class Rpc {
+export class StreamingRpcImpl implements StreamingRpc {
   private _lastReqId = 0;
   private _pendingCalls = new Map<number, CallObj>();
-  private _warn: (message: string) => void;     // TODO
-  private _sender: Sender;  // TODO
-  private _callback: (data: unknown) => Promise<Response>; // TODO
+  // key may represent an incoming call or signal, or an outgoing response; we encode these as
+  // streamKey of `${mtype}:${reqId}`.
+  private _pendingStreams = new Map<string, StreamingHelper>();
 
-  public makeCall(data: unknown): Promise<Response> {
-    return new Promise<Response>((callResolve, reject) => {
+  constructor(private _options: StreamingRpcOptions) {}
+
+  public initialize(options: StreamingRpcOptions): void {
+    this._options = options;
+  }
+
+  public makeCall(callData: StreamingDataChecked): Promise<StreamingDataChecked> {
+    return new Promise<StreamingDataChecked>((resolve, reject) => {
       const reqId = ++this._lastReqId;
-      const callObj: CallObj = {reqId, callResolve};
+      const callObj: CallObj = {reqId, resolve};
       this._pendingCalls.set(reqId, callObj);
-      const msg: IMessage = {mtype: MsgType.Call, reqId, data};
-      // We send with checking for draining here because no mechanism to pause getting called
-      // anyway; that mechanism is only used for streaming.
-      this._sender.sendMessage(msg).catch((err: Error) => {
+      this._sendStreamingData(MsgType.Call, reqId, callData).catch((err: Error) => {
         // If _sendMessage fails, reject immediately.
         this._pendingCalls.delete(reqId);
         reject(err);
@@ -80,147 +46,147 @@ export class Rpc {
     });
   }
 
+  public sendSignal(signalData: StreamingDataChecked): Promise<void> {
+    const reqId = ++this._lastReqId;
+    return this._sendStreamingData(MsgType.Signal, reqId, signalData);
+  }
+
   /**
    * Returns whether the message was successfully processed.
    */
   public dispatch(msg: IMessage): boolean {
     try {
-      switch (msg.mtype) {
-        case MsgType.Call: { this._onMessageCall(msg); break; }
-        case MsgType.RespPart:
-        case MsgType.RespDone: {
-          const callObj = this._getRequiredCallObj(msg.reqId);
-          const callResolve = callObj.callResolve;
-          if (callResolve) {
-            // Processing the main result of the call.
-            callObj.callResolve = undefined;
-            let chunks: AsyncIterableIterator<ResponseChunk>|undefined = undefined;
-            if (msg.mtype === MsgType.RespPart) {
-              callObj.queuedChunks = [];
-              callObj.queuedCallbacks = [];
-              const queuedChunks = callObj.queuedChunks;
-              const queuedCallbacks = callObj.queuedCallbacks;
-              chunks = {
-                [Symbol.asyncIterator]() { return this; },
-                next(): Promise<ResponseChunkIter> {
-                  if (queuedChunks.length > 0) {
-                    return Promise.resolve(queuedChunks.shift()!);
-                  } else {
-                    return new Promise<ResponseChunkIter>(resolve => {
-                      queuedCallbacks.push(resolve);
-                    });
-                  }
-                }
-              };
-            } else {
-              this._pendingCalls.delete(msg.reqId);
-            }
-            callResolve({data: msg.data, chunks});
-          } else {
-            // Processing chunks of the iterable.
-            const queuedChunks = callObj.queuedChunks;
-            const queuedCallbacks = callObj.queuedCallbacks;
-            if (!queuedCallbacks || !queuedChunks) {
-              throw new Error("Bug");
-            }
-            const push = (item: ResponseChunkIter): void => {
-              if (queuedCallbacks.length > 0) {
-                const callback = queuedCallbacks.shift()!;
-                callback(item);
-              } else {
-                queuedChunks.push(item);
-              }
-            };
-            push({value: checkData(msg.data), done: false});
-            if (msg.mtype === MsgType.RespDone) {
-              push({value: undefined, done: true});
-            }
-          }
-          break;
+      // Check if this message is part of a streaming portion.
+      const streamKey = getStreamKey(msg);
+      const chunks = this._pendingStreams.get(streamKey);
+      if (chunks) {
+        if (msg.error) {
+          chunks._supplyError(this._options.msgToError(msg.error));
+          this._pendingStreams.delete(streamKey);
+        } else if (!msg.more) {
+          chunks._finishChunks();
+          this._pendingStreams.delete(streamKey);
+        } else {
+          chunks._supplyChunk(msg.data as UniqueTypes["Chunk"]);
         }
-        case MsgType.RespErr: {
-          const callObj = this._popRequiredCallObj(msg.reqId);
-          const errObj = checkError(msg.data);
-          if (callObj.callResolve) {
-            callObj.callResolve(Promise.reject<Response>(errObj));
-          } else {
-            const queuedCallbacks = callObj.queuedCallbacks;
-            if (!queuedCallbacks) {
-              throw new Error("Bug");
-            }
-            for (const callback of queuedCallbacks) {
-              callback(Promise.reject(errObj));
-            }
-          }
-          break;
+      } else {
+        switch (msg.mtype) {
+          case MsgType.Call: { this._onMessageCall(msg); break; }
+          case MsgType.Signal: { this._onMessageSignal(msg); break; }
+          case MsgType.Resp: { this._onMessageResp(msg); break; }
+          default: throw new Error('Invalid mtype received in message');
         }
-        default: throw new Error('Invalid message received (mtype)');
       }
       return true;
     } catch (err) {
-      this._warn(`_dispatch failed: ${err}`);
+      this._options.logWarn('dispatch failed', err);
       return false;
+    }
+  }
+
+  // Sends data.value, and iterates through chunks (if any) sending them too. May raise exception
+  // on failure to send; but on failure to iterate through chunks, will send an error message to
+  // the other wise.
+  private async _sendStreamingData(mtype: MsgType, reqId: number, data: StreamingDataChecked): Promise<void> {
+    if (!data.chunks) {
+      await this._sendMessage({mtype, reqId, data: data.value});
+    } else {
+      await this._sendMessage({mtype, reqId, data: data.value, more: true});
+      // Note that we only wait to drain for the streaming portion of calls and responses, which is
+      // the only part where we control how fast we are consuming it.
+      try {
+        for await (const chunk of data.chunks) {
+          await this._options.sender.waitToDrain();
+          await this._sendMessage({mtype, reqId, data: chunk, more: true});
+        }
+        await this._sendMessage({mtype, reqId});
+      } catch (err) {
+        if (err instanceof SendError) {
+          throw err;
+        }
+        await this._sendMessage({mtype, reqId, error: this._options.errorToMsg(err)});
+      }
+    }
+  }
+
+  private async _sendMessage(msg: IMessage) {
+    try {
+      await this._options.sender.sendMessage(msg);
+    } catch (err) {
+      // Wrap sending errors, to be able to tell them apart from errors that come from handlers.
+      throw new SendError(err);
     }
   }
 
   private _onMessageCall(msg: IMessage): void {
     const reqId = msg.reqId;
-    const doCall = async () => {
-      try {
-        const {data, chunks} = await this._callback(msg.data);
-        if (chunks) {
-          // Send response along with a subsequent stream of chunks.
-          await this._sendResponseMsg({mtype: MsgType.RespPart, reqId, data});
-          for await (const chunk of chunks) {
-            await this._sendResponseMsg({mtype: MsgType.RespPart, reqId, data: chunk});
-          }
-          await this._sendResponseMsg({mtype: MsgType.RespDone, reqId, data: undefined});
-        } else {
-          // No streaming portion; just sent the response.
-          await this._sendResponseMsg({mtype: MsgType.RespDone, reqId, data});
-        }
-      } catch (e) {
-        await this._sendResponseMsg({mtype: MsgType.RespErr, reqId, data: e});
-      }
-    };
-    doCall().catch((e: unknown) => this._warn(`Unexpected rejection in _onMessageCall: ${e}`));
-  }
-
-  private _sendResponseMsg(msg: IMessage): Promise<void>|null {
-    this._sender.sendMessage(msg).catch((err: Error) => {
-      this._warn(`failed to send response: ${err}`);
-    });
-    return this._sender.waitToDrain();
-  }
-
-  private _getRequiredCallObj(reqId: number): CallObj {
-    const callObj = this._pendingCalls.get(reqId);
-    if (!callObj) {
-      throw new Error(`Response to unknown reqId ${reqId}`);
+    if (msg.error) {
+      throw new Error(`Unexpected call with an error, reqId ${reqId}`);
     }
-    return callObj;
+    const chunks = this._getChunksIfStreaming(msg);
+    (async () => {
+      try {
+        const respData = await this._options.callHandler({value: msg.data, chunks}) as StreamingDataChecked;
+        await this._sendStreamingData(MsgType.Resp, reqId, respData);
+      } catch (err) {
+        if (err instanceof SendError) {
+          throw err;
+        }
+        await this._sendMessage({mtype: MsgType.Resp, reqId, error: this._options.errorToMsg(err)});
+      }
+    })().catch((err: Error) => {
+      this._options.logWarn('failed to send response', err);
+    });
   }
-  private _popRequiredCallObj(reqId: number): CallObj {
-    const callObj = this._getRequiredCallObj(reqId);
-    this._pendingCalls.delete(reqId);
-    return callObj;
+
+  private _onMessageSignal(msg: IMessage): void {
+    const reqId = msg.reqId;
+    if (msg.error) {
+      throw new Error(`Unexpected signal with an error, reqId ${reqId}`);
+    }
+    const chunks = this._getChunksIfStreaming(msg);
+    this._options.signalHandler({value: msg.data, chunks});
+  }
+
+  private _onMessageResp(msg: IMessage): void {
+    const callObj = this._pendingCalls.get(msg.reqId);
+    if (!callObj) {
+      throw new Error(`Response to unknown reqId ${msg.reqId}`);
+    }
+    this._pendingCalls.delete(msg.reqId);
+    if (msg.error) {
+      // Call failed.
+      callObj.resolve(Promise.reject<StreamingDataChecked>(this._options.msgToError(msg.error)));
+    } else {
+      const chunks = this._getChunksIfStreaming(msg);
+      callObj.resolve({value: msg.data as UniqueTypes["Value"], chunks});
+    }
+  }
+
+  private _getChunksIfStreaming(msg: IMessage): StreamingHelper|undefined {
+    if (!msg.more) { return undefined; }
+    // The call itself has a streaming portion.
+    const chunks = new StreamingHelper();
+    this._pendingStreams.set(getStreamKey(msg), chunks);
+    return chunks;
   }
 }
 
-// Encoding of messages. This is specific to parseMessage/serializeMessage. Other options would be
-// fine, as long as both sides agree. (In particular, protocols more conscious of versioning may
-// be better).
+// Encoding of messages. This is specific to parseMessage/serializeMessage. Different variants
+// would be fine, as long as both sides agree. (In particular, protocols more conscious of
+// versioning may be better).
 //
-// Call      C<ID>:<opaque input>
-// RespPart  r<ID>:<opaque result of method or stream chunk, with more chunks to follow>
-// RespDone  R<ID>:<opaque result of method>
-// RespErr   E<ID>:<opaque error value>
+// Call     C<Flag><ID>:<opaque input>
+// Signal   S<Flag><ID>:<opaque input>
+// Resp     R<Flag><ID>:<opaque result of method>
+//
+// Here, <ID> is reqId, and <Flag> is "+" for `more: true`, and "!" for error (in which case data
+// after ":" is the error portion). If colon (":") is missing, there is no data.
 
 const mtypeCodes: [MsgType, string][] = [
-  [MsgType.Call, "C"],
-  [MsgType.RespPart, "r"],
-  [MsgType.RespDone, "R"],
-  [MsgType.RespErr, "E"],
+  [MsgType.Call,    "C"],
+  [MsgType.Signal,  "S"],
+  [MsgType.Resp,    "R"],
 ];
 
 const mtypeToCode = new Map<MsgType, string>(mtypeCodes);
@@ -231,13 +197,28 @@ export function parseMessage(input: string, parseData: (data: string) => unknown
   if (!mtype) {
     throw new Error("Invalid input message (mtype)");
   }
-  const colon = input.indexOf(":");
-  const reqId = parseInt(input.slice(1, colon), 10);
+  let reqIdStart = 1;
+  let isError = false;
+  let more = false;
+  if (input[1] === '!') {
+    isError = true;
+    reqIdStart++;
+  } else if (input[1] === '+') {
+    more = true;
+    reqIdStart++;
+  }
+
+  const dataStart = (input.indexOf(":") + 1) || input.length;
+  const reqId = parseInt(input.slice(reqIdStart, dataStart - 1), 10);
   if (!reqId) {
     throw new Error("Invalid input message (reqId)");
   }
-  const data = parseData(input.slice(colon + 1));
-  return {mtype, reqId, data};
+  const data = parseData(input.slice(dataStart));
+  if (isError) {
+    return {mtype, reqId, error: data};
+  } else {
+    return {mtype, reqId, data, more};
+  }
 }
 
 export function serializeMessage(msg: IMessage, serializeData: (data: unknown) => string): string {
@@ -245,182 +226,82 @@ export function serializeMessage(msg: IMessage, serializeData: (data: unknown) =
   if (!code) {
     throw new Error("Invalid message (mtype)");
   }
-  return code + msg.reqId + ":" + serializeData(msg.data);
+  let flag = "";
+  let data = msg.data;
+  if (msg.error) {
+    flag = "!";
+    data = msg.error;
+  } else if (msg.more) {
+    flag = "+";
+  }
+  return code + flag + msg.reqId + ":" + serializeData(data);
 }
 
 //======================================================================
-/**
- * This describes the minimum of communication that we need between the client and the data
- * engine.
- */
-export interface CommBase {
-  setSendMessage(sendMessage: (msg: unknown) => void): void;
-  receiveMessage(msg: unknown): void;
+
+type ChunkIterResult = IteratorResult<UniqueTypes["Chunk"], unknown>;
+
+class StreamingHelper implements AsyncIterableIterator<UniqueTypes["Chunk"]> {
+  private _queuedChunks: ChunkIterResult[] = [];
+  private _queuedCallbacks: Array<(chunk: ChunkIterResult | Promise<ChunkIterResult>) => void>;
+  private _finished = false;    // If finished, will skip further processing.
+
+  public [Symbol.asyncIterator]() {
+    return this;
+  }
+
+  public next(): Promise<ChunkIterResult> {
+    const chunk = this._queuedChunks.shift();
+    if (chunk) {
+      return Promise.resolve(chunk);
+    } else {
+      return new Promise<ChunkIterResult>(resolve => {
+        this._queuedCallbacks.push(resolve);
+      });
+    }
+  }
+
+  public return(value: unknown): Promise<ChunkIterResult> {
+    this._finished = true;
+    this._cleanup();
+    return Promise.resolve({value, done: true});
+  }
+
+  public _supplyChunk(chunk: UniqueTypes["Chunk"]): void {
+    if (this._finished) { return; }
+    this._pushItem({value: chunk, done: false});
+  }
+
+  public _finishChunks(): void {
+    if (this._finished) { return; }
+    this._pushItem({value: undefined, done: true});
+    this._cleanup();
+  }
+
+  public _supplyError(errObj: Error): void {
+    if (this._finished) { return; }
+    for (const callback of this._queuedCallbacks) {
+      callback(Promise.reject(errObj));
+    }
+    this._cleanup();
+  }
+
+  private _cleanup() {
+    this._queuedChunks = [];
+    this._queuedCallbacks = [];
+    this._finished = true;
+  }
+
+  private _pushItem(item: ChunkIterResult) {
+    const callback = this._queuedCallbacks.shift();
+    if (callback) {
+      callback(item);
+    } else {
+      this._queuedChunks.push(item);
+    }
+  }
 }
 
-// TODO should it just be a Duplex stream? No because no stream impl in browser.
-// Goal:
-// friendly interface that allows reading streaming data via an iterator
-//    const response = await rpcStub.fetchQueryStreaming(...);
-//    for await (const row of response.rows) {
-//    }
-// translates to:
-//    sendMessage(requestId, methodName, args), register callback for requestId
-//    on(message)
-//      find callback by requestId
-//      call it (resolve promise) with {
-//        data      // what's directly in message
-//        iterable  // iterating through should yield more data
-//      }
-//
-//  OPTION 1 for iterable:
-//    function * generator() {
-//      while (read from socket) {
-//        yield chunk we read
-//      }
-//    }
-//  BUT, let's say another RPC call was initiated earlier, and server has a response ready to
-//  send. It's hard for the server to delay the response past end-of-stream; and hard for client
-//  to handle it sooner.
-//
-//  whlie loop could essentially call on(message) for anything that's NOT part of the stream.
-//
-//  OPTION 2 for iterable:
-//    on(message) finds iterable by requestId
-//      calls resolve method for async iterator's next() method, i.e. resolves the next chunk.
-//
-
-
-/*
-  fetchQuery(query: Query): Promise<QueryResult>;
-  fetchQueryStreaming(query: Query, timeoutMs: number): Promise<QueryResultStreaming>;
-  fetchAndSubscribe(query: Query, callback: QuerySubCallback): Promise<QueryResult>;
-  querySubscribe(query: Query, callback: QuerySubCallback): Promise<QuerySubId>;
-  queryUnsubscribe(subId: QuerySubId): Promise<boolean>;
-  applyActions(actionSet: ActionSet): Promise<ApplyResultSet>;
-
-
-*/
-
-/*
-
-// Protobuf rpc. Supports streaming, but not sure how.
-/Users/dmitry/devel/card-reader/node_modules/protobufjs/src/rpc.js
-
-// Custom RPC implementation for form-ts-checker-webpack-plugin. Really similar to grainrpc. Just matches
-// responses with calls. For some reason they switched to this custom one over worker-rpc.
-/Users/dmitry/devel/software/tui.calendar/node_modules/fork-ts-checker-webpack-plugin/lib/rpc/RpcMessage.js
-
-// Same as above, used by OLDER version of fork-ts-checker.
-/Users/dmitry/devel/grist-tmp/node_modules/worker-rpc/lib/RpcProvider.js
-/Users/dmitry/devel/software/tui.calendar/node_modules/worker-rpc/lib/RpcProvider.js
-
-// ???
-/Users/dmitry/devel/software/electron/lib/browser/rpc-server.js
-
-// ???
-/Users/dmitry/devel/grist-zapier/node_modules/zapier-platform-core/src/tools/create-rpc-client.js
-
-=========================================================================
-GRR. Websockets don't seem to implement Stream interface on both sides.
-
-The sending side on Node does implement Writable interface (via ws library), including 'drain'
-events. But the receiving side, even on Node, just emits 'message' events. There is no way to
-process those "slowly", as far as I can tell. Actually, on Node side, can call pause()/unpause().
-
-On browser side, typescript interfaces only show send() that takes neither a callback nor returns
-a value; and addEventListener. So no concepts of backpressure in either direction.
-Ooooh, I am wrong. WEbsocket exposes bufferedAmount! Which means I can keep my own high water mark
-for writing.
-
-What does this mean for a streaming interface?
-- Only makes sense to stream data FROM node TO browser.
-- There is no backpressure on browser, data will keep coming, if browser is slow to process it,
-it's the browser's memory (wherever data is being queued) that would fill up.
-- From Browser to Node, can we stream? E.g. uploading?
-
-======================================================================
-1. High level input
-
-    a. Call comes in: fetchQueryStreaming(...args)
-    b. Implementation responds with [result, asyncIterable]
-       websocket.send({data: result, done: false})
-       for (item of asyncIterable) {
-          websocket.send({data: item, done: false})
-       // ????
-       websocket.send({data: undefined, done: true})
-       // The above matches iterator.next() protocol.
-
-    ^^^ should i translate to a lower level [value, nextPromise] chain?
-    ^^^ how to respect send() backpressure?
-
-            in "readable-stream" npm module:
-              'Readable.from is not available in the browser'
-              That's confusing -- no obvious reason for it. Could look further into why.
-
-        Readable.from(asyncIterable).pipe(websocketStream)
-
-        IF doable, could be an argument to stick with iterable interface, without translating
-        down. BUT: (1) no Readable.from() in browser; (2) likely no websocketStream in browser.
-        Alternative is to implement manually.
-
-    c. To implement manually...
-       websocket.send({data: result, done: false})
-       if (returned false or reached high water mark) {
-          await drain()
-       }
-       for (item of asyncIterable) {
-          websocket.send({data: item, done: false})
-          if (returned false or reached high water mark) {
-             await drain()
-          }
-       }
-       // ????
-       websocket.send({data: undefined, done: true})
-       drain() {
-          on('drain', resolve)    // in node
-          setTimeout() => if < high water mark, resolve
-
-
-
-2. Lower-level input
-      Implementation response (after await) with {data: result, next: nextPromise}
-      websocket.send({result, done: false})
-      await nextPromise => {data: item, next: nextPromise}
-      websocket.send({item, done: false})
-      await nextPromise => {data: item, next: nextPromise}
-      websocket.send({item, done: false})
-      await nextPromise => {data: item, next: undefined}
-      websocket.send({item, done: true})
-
-3. Translate high-level to low-level:
-      await, get [result, asyncIterable]
-      let asyncIterator;
-      function proc(result) {
-        const next = new Promise((resolve, reject) => {
-          const value = asyncIterator.next();
-          Promise.resolve(value).then(proc);
-        });
-        return {data: result, next};
-
-    =======
-    I may have a fundamental misunderstanding of the difference between (async) iterators and
-    promise chains. An iterator doesn't produce the next value until next() is called. A Promise
-    chain expects nothing from the caller. If caller never awaits, it can still resolve fully on
-    its own schedule, perhaps immediately.
-
-    So....
-    Iterator protocol is the better fit here.
-
-
-  private _callback: (data: unknown) => Promise<Response<unknown>>; // TODO
-interface Response<T> {
-  data: T;
-  next?: Promise<Response<T>>;   // For streaming responses.
+function getStreamKey(msg: IMessage) {
+  return `${msg.mtype}:${msg.reqId}`;
 }
-
-
-
-
-*/
-

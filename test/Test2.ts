@@ -44,7 +44,7 @@ describe('Test2', function() {
 
   let testDir: string;
   before(async function() {
-    testDir = await createTestDir('Test1');
+    testDir = await createTestDir('Test2');
   });
 
   async function setUpDB(dbPath: string) {

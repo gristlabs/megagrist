@@ -1,4 +1,5 @@
 import {Channel, IMessage, MsgType} from './StreamingRpc';
+import type {WebSocket as WSWebSocket} from 'ws';
 
 // How full ws.bufferedAmount should be before we start waiting.
 const defaultHighWaterMark = 1024 * 512;
@@ -20,7 +21,7 @@ export class WebSocketChannel implements Channel {
   private _drainResolve: (() => void) | null = null;
   private _drainCheckInterval: ReturnType<typeof setInterval> | null = null;
 
-  constructor(private _ws: WebSocket, options?: {highWaterMark?: number, bufferTimeout?: number}) {
+  constructor(private _ws: WebSocket|WSWebSocket, options?: {highWaterMark?: number, bufferTimeout?: number}) {
     this._highWaterMark = options?.highWaterMark || defaultHighWaterMark;
     this._bufferTimeout = options?.bufferTimeout || defaultBufferTimeout;
     _ws.onmessage = this._onWSMessage.bind(this);

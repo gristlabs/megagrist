@@ -4,8 +4,8 @@ import {IMessage, MsgType, StreamingData, StreamingRpc, StreamingRpcOptions} fro
  * Primary way of creating a StreamingRpc object.
  */
 export function createStreamingRpc(options: StreamingRpcOptions): StreamingRpc {
-  const rpc: StreamingRpc = new StreamingRpcImpl(options);
-  options.channel.onmessage = (msg: IMessage) => rpc.dispatch(msg);
+  const rpc: StreamingRpc = new StreamingRpcImpl();
+  rpc.initialize(options);
   return rpc;
 }
 
@@ -27,40 +27,39 @@ type StreamingDataChecked = StreamingData<UniqueTypes["Value"], UniqueTypes["Chu
 interface CallObj {
   reqId: number;
   resolve: (data: StreamingDataChecked | Promise<StreamingDataChecked>) => void;
-  callCleanup?: () => void;
 }
 
 export class StreamingRpcImpl implements StreamingRpc {
+  private _options: StreamingRpcOptions;
   private _lastReqId = 0;
   private _pendingCalls = new Map<number, CallObj>();
   // key may represent an incoming call or signal, or an outgoing response; we encode these as
   // streamKey of `${mtype}:${reqId}`.
   private _pendingStreams = new Map<string, StreamingHelper>();
 
-  constructor(private _options: StreamingRpcOptions) {}
+  public initialize(options: StreamingRpcOptions): void {
+    this._options = options;
+    options.channel.onmessage = this.dispatch.bind(this);
+
+    const disconnectHandler = () => {
+      this._onDisconnect(this.disconnectSignal.reason as Error);
+      this.disconnectSignal.removeEventListener('abort', disconnectHandler);
+    };
+    this.disconnectSignal.addEventListener('abort', disconnectHandler);
+  }
 
   public get disconnectSignal() {
     return this._options.channel.disconnectSignal;
-  }
-
-  public initialize(options: StreamingRpcOptions): void {
-    this._options = options;
   }
 
   public makeCall(callData: StreamingDataChecked): Promise<StreamingDataChecked> {
     return new Promise<StreamingDataChecked>((resolve, reject) => {
       const reqId = ++this._lastReqId;
       const callObj: CallObj = {reqId, resolve};
-      const abortCall = () => reject(this.disconnectSignal.reason as Error);
-      this.disconnectSignal.addEventListener('abort', abortCall);
       this._pendingCalls.set(reqId, callObj);
-      callObj.callCleanup = () => {
-        this.disconnectSignal.removeEventListener('abort', abortCall);
-        this._pendingCalls.delete(reqId);
-      };
       this._sendStreamingData(MsgType.Call, reqId, callData).catch((err: Error) => {
         // If _sendMessage fails, reject immediately.
-        callObj.callCleanup?.();
+        this._pendingCalls.delete(reqId);
         reject(err);
       });
     });
@@ -99,6 +98,20 @@ export class StreamingRpcImpl implements StreamingRpc {
     } catch (err) {
       this._options.logWarn('dispatch failed', err);
       return false;
+    }
+  }
+
+  private _onDisconnect(reason: Error) {
+    const calls = Array.from(this._pendingCalls.values());
+    this._pendingCalls.clear();
+    for (const callObj of calls) {
+      callObj.resolve(Promise.reject(reason));
+    }
+
+    const streams = Array.from(this._pendingStreams.values());
+    this._pendingStreams.clear();
+    for (const stream of streams) {
+      stream._supplyError(reason);
     }
   }
 
@@ -174,7 +187,7 @@ export class StreamingRpcImpl implements StreamingRpc {
     if (!callObj) {
       throw new Error(`Response to unknown reqId ${msg.reqId}`);
     }
-    callObj.callCleanup?.();
+    this._pendingCalls.delete(msg.reqId);
     if (msg.error) {
       // Call failed.
       callObj.resolve(Promise.reject<StreamingDataChecked>(this._options.channel.msgToError(msg.error)));
@@ -187,14 +200,9 @@ export class StreamingRpcImpl implements StreamingRpc {
   private _getChunksIfStreaming(msg: IMessage): StreamingHelper|undefined {
     if (!msg.more) { return undefined; }
     const streamKey = getStreamKey(msg);
-    const chunks = new StreamingHelper();
-    const abortStream = () => chunks._supplyError(this.disconnectSignal.reason);
-    this.disconnectSignal.addEventListener('abort', abortStream);
+    const cleanupCallback = () => this._pendingStreams.delete(streamKey);
+    const chunks = new StreamingHelper(cleanupCallback);
     this._pendingStreams.set(streamKey, chunks);
-    chunks._onCleanup(() => {
-      this.disconnectSignal.removeEventListener('abort', abortStream);
-      this._pendingStreams.delete(streamKey);
-    });
     return chunks;
   }
 }
@@ -204,13 +212,14 @@ type ChunkIterResult = IteratorResult<UniqueTypes["Chunk"], undefined>;
 class StreamingHelper implements AsyncIterableIterator<UniqueTypes["Chunk"]> {
   private _queuedChunks: ChunkIterResult[] = [];
   private _queuedCallbacks: Array<(chunk: ChunkIterResult | Promise<ChunkIterResult>) => void>;
-  private _cleanupCallback: (() => void) | undefined;
   // If finished, will skip further processing
   private _finished = false;
   // First value to supply to next() when iterator ends (successfully or via exception). Once the
   // first value is supplied, _endValue is reset, and subsequent calls will return a bland "stream
   // is done" result, as generators do.
   private _endValue: Promise<ChunkIterResult> | undefined;
+
+  constructor(private _cleanupCallback: () => void) {}
 
   public [Symbol.asyncIterator]() {
     return this;
@@ -239,10 +248,6 @@ class StreamingHelper implements AsyncIterableIterator<UniqueTypes["Chunk"]> {
   // The method prefixed with underscore are only public for use by StreamingRpcImpl, and should
   // be considered private by outside users.
 
-  public _onCleanup(cleanupCallback: () => void): void {
-    this._cleanupCallback = cleanupCallback;
-  }
-
   public _supplyChunk(chunk: UniqueTypes["Chunk"]): void {
     if (this._finished) { return; }
     this._pushItem({value: chunk, done: false});
@@ -268,7 +273,7 @@ class StreamingHelper implements AsyncIterableIterator<UniqueTypes["Chunk"]> {
     }
     this._queuedChunks = [];
     this._queuedCallbacks = [];
-    this._cleanupCallback?.();
+    this._cleanupCallback();
   }
 
   private _useEndValue(): Promise<ChunkIterResult> {

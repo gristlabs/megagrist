@@ -64,10 +64,9 @@ quiet() {
   if [[ -z "${VERBOSE-}" ]]; then
     local tmp_output=$(mktemp ${TMPDIR:-/tmp}/build_output.XXXXXX)
     if ! "$@" >"$tmp_output" 2>&1; then
-      local status=$?
       cat "$tmp_output"
       rm "$tmp_output"
-      return $status
+      return 1
     fi
     rm "$tmp_output"
   else

@@ -82,18 +82,21 @@ describe('Test2', function() {
   async function readDBStreaming(dbPath: string, memory: Memory, limit?: number) {
     const db2: SqliteDatabase.Database = SqliteDatabase(dbPath, {});
     const dataEngine2 = new DataEngine(db2);
-    const result = await dataEngine2.fetchQueryStreaming({tableId: 'Table1', sort: ['id'], limit}, 60_000);
+    const result = await dataEngine2.fetchQueryStreaming({tableId: 'Table1', sort: ['id'], limit}, {
+      timeoutMs: 60_000,
+      chunkRows: 500,
+    });
     let count = 0;
     let sumRowIds = 0;
-    for (const row of result.rows) {
-      count += 1;
-      if (count % 1000 === 0) {
-        // console.warn("readDB at", count);
-        // Return to event loop occasionally.
-        await new Promise(r => setTimeout(r, 0));
-        memory.note();
+    for await (const chunk of result.chunks) {
+      // console.warn("readDB at", count);
+      // Return to event loop after every chunk of rows.
+      await new Promise(r => setTimeout(r, 0));
+      memory.note();
+      for (const row of chunk) {
+        ++count;
+        sumRowIds += row[0] as number;
       }
-      sumRowIds += row[0] as number;
     }
     return {count, sumRowIds};
   }

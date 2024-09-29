@@ -64,11 +64,11 @@ export interface QueryResult extends QueryResultCommon {
 }
 
 /**
- * Results of fetching a table, with a streaming interface.
+ * Results of fetching a table, with a streaming interface, suitable for StreamingRpc.
  */
-export interface QueryResultStreaming extends QueryResultCommon {
-  colIds: string[];
-  rows: Iterable<CellValue[]>;
+export interface QueryResultStreaming {
+  value: QueryResultCommon & {colIds: string[]};
+  chunks: AsyncIterable<CellValue[][]>;
 }
 
 /**

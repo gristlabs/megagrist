@@ -1,6 +1,6 @@
 import {ActionSet, ApplyResultSet, Query, QueryResult, QueryResultStreaming, QuerySubId} from './types';
 import {CellValue} from './DocActions';
-import {IDataEngine, QuerySubCallback} from './IDataEngine';
+import {IDataEngine, QueryStreamingOptions, QuerySubCallback} from './IDataEngine';
 import {BindParams, sqlSelectFromQuery} from './sqlConstruct';
 import {StoreDocAction} from './StoreDocAction';
 import SqliteDatabase from 'better-sqlite3';
@@ -32,8 +32,7 @@ export class DataEngine implements IDataEngine {
     })();
   }
 
-  // TODO we need to come up with how to do streaming fetches over a network.
-  public async fetchQueryStreaming(query: Query, timeoutMs: number): Promise<QueryResultStreaming> {
+  public async fetchQueryStreaming(query: Query, options: QueryStreamingOptions): Promise<QueryResultStreaming> {
     const bindParams = new BindParams();
     const sql = sqlSelectFromQuery(query, bindParams);
     // console.warn("RUNNING SQL", sql, bindParams.getParams());
@@ -42,7 +41,7 @@ export class DataEngine implements IDataEngine {
     // Caller is expected to iterate through the generator. This iteration happens inside a DB
     // transaction, so we keep a transaction going. In WAL mode this should not prevent other
     // reads or writes in parallel (on other connections!), but does prevent checkpointing. So
-    // there is also a timeout. If the reader of the genrator doesn't finish within timeoutMs, the
+    // there is also a timeout. If the reader of the generator doesn't finish within timeoutMs, the
     // generator will throw an exception, and end the transaction.
     // TODO this flow, especially error handling, needs careful testing.
 
@@ -66,7 +65,7 @@ export class DataEngine implements IDataEngine {
         timedOut = true;
         cleanup();
       };
-      abortTimer = setTimeout(onTimeout, timeoutMs);
+      abortTimer = setTimeout(onTimeout, options.timeoutMs);
 
       // This may be needed to force a snapshot to be taken (not sure). More sensibly, this may be
       // a good time to get actionNum (to identify the current state of the DB).
@@ -74,14 +73,23 @@ export class DataEngine implements IDataEngine {
 
       const stmt = this._db.prepare<unknown[], CellValue[]>(sql);
 
-      function *generateRows() {
+      async function *generateRows() {
         try {
           iterator = stmt.raw().iterate(bindParams.getParams());
+          let chunk: CellValue[][] = [];
           for (const row of iterator) {
-            yield row;
+            chunk.push(row);
+            if (chunk.length === options.chunkRows) {
+              yield chunk;
+              chunk = [];
+            }
             if (timedOut) {
               throw new Error("Timed out");
             }
+          }
+          if (chunk.length > 0) {
+            yield chunk;
+            chunk = [];
           }
         } finally {
           if (!timedOut) {
@@ -93,10 +101,12 @@ export class DataEngine implements IDataEngine {
       const colIds = stmt.columns().map(c => c.name);
 
       const queryResult: QueryResultStreaming = {
-        tableId: query.tableId,
-        colIds,
-        actionNum: 0,       // TODO
-        rows: generateRows(),
+        value: {
+          tableId: query.tableId,
+          actionNum: 0,       // TODO
+          colIds,
+        },
+        chunks: generateRows(),
       };
       return queryResult;
     } catch (e) {

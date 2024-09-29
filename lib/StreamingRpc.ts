@@ -83,7 +83,7 @@ export interface StreamingRpcOptions {
   channel: Channel;
   logWarn: (message: string, err: Error) => void;
   callHandler: (callData: StreamingData) => Promise<StreamingData>;
-  signalHandler: (callData: StreamingData) => void;
+  signalHandler: (signalData: StreamingData) => void;
 }
 
 /**

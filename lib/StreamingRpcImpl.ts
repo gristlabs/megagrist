@@ -120,6 +120,7 @@ export class StreamingRpcImpl implements StreamingRpc {
         }
         await this._sendMessage({mtype, reqId});
       } catch (err) {
+        // TODO: see if calling data.chunks.return/throw would allow implementer to abort work.
         if (err instanceof SendError) {
           throw err;
         }

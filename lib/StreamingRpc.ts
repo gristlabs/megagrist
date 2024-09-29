@@ -8,7 +8,8 @@
  * affects sending of data.
  *
  * (On the receiving side, it will be read as the network makes it available, and emitted as
- * events. I found no options to throttle reads for a WebSocket, but also no need.)
+ * events. I found no options to throttle reads for a WebSocket, but also no need yet. But see
+ * https://developer.mozilla.org/en-US/docs/Web/API/WebSocketStream for what may work some day.)
  *
  * In Node, the sending side (ws library) implements Stream.Writable interface. In fact,
  * 'websocket-stream' npm module may help with streaming data from Node (perhaps as
@@ -40,18 +41,68 @@
  *  async function *generateChunks() {
  *    for (...) {
  *      yield chunk;
+ *      rpc.disconnectSignal.throwIfAborted();    // Optionally
  *    }
  *  }
- *  makeCall({value, chunks: generateChunks()});
+ *  rpc.makeCall({value, chunks: generateChunks()});
  */
-export interface IMessage {
-  mtype: MsgType;
-  reqId: number;
-  more?: boolean;     // Is more data expected (i.e. more streamed chunks)? Defaults to false.
-  data?: unknown;
-  error?: unknown;    // If this message represents an error; then `more` and `data` are ignored.
+
+/**
+ * Defines the shape of data that supports streaming.
+ */
+export interface StreamingData<Value = unknown, Chunk = unknown> {
+  value: Value;
+  chunks?: AsyncIterable<Chunk>;
 }
 
+/**
+ * Defines what we need for sending and receiving messages.
+ */
+export interface Channel {
+  // Should be signalled when the channel has disconnected.
+  disconnectSignal: AbortSignal;
+
+  // May be set to a callback to call when a message is received.
+  onmessage: (msg: IMessage) => void;
+
+  sendMessage(msg: IMessage): Promise<void>;
+
+  // If sending should be paused (because it is filling up a buffer which needs to drain), should
+  // return a promise for when sending may resume. Otherwise should return null.
+  waitToDrain(): null|Promise<void>;
+
+  // We also give Channel the responsibility to encode/decode exceptions into a serializable form.
+  msgToError(errorFromMsg: unknown): Error;
+  errorToMsg(error: Error): unknown;
+}
+
+/**
+ * These are the options you need to provide to make and receive streaming RPC calls.
+ */
+export interface StreamingRpcOptions {
+  channel: Channel;
+  logWarn: (message: string, err: Error) => void;
+  callHandler: (callData: StreamingData) => Promise<StreamingData>;
+  signalHandler: (callData: StreamingData) => void;
+}
+
+/**
+ * The main StreamingRpc interface.
+ */
+export interface StreamingRpc {
+  // May be used to detect when the channel has disconnected, and abort unnecessary work.
+  // This is simply a reference to the disconnectSignal provided by the channel.
+  disconnectSignal: AbortSignal;
+
+  initialize(options: StreamingRpcOptions): void;
+  makeCall(callData: StreamingData): Promise<StreamingData>;
+  sendSignal(signalData: StreamingData): Promise<void>;
+  dispatch(msg: IMessage): boolean;
+}
+
+// The rest should not be needed by users of StreamingRpc, but needed by StreamingRpc
+// implementations, and to implement the channels to pass around messages.
+//
 // Messaging happens as follows:
 // Call plain:      -> {Call, reqId, data}
 // Call streaming:  -> {Call, reqId, data, more: true}      => seen as value
@@ -62,40 +113,17 @@ export interface IMessage {
 //
 // If any of the messages contain an `error` field, then it always ends the streaming message, and
 // `more` and `data` fields are ignored.
+
+export interface IMessage {
+  mtype: MsgType;
+  reqId: number;
+  more?: boolean;     // Is more data expected (i.e. more streamed chunks)? Defaults to false.
+  data?: unknown;
+  error?: unknown;    // If this message represents an error; then `more` and `data` are ignored.
+}
+
 export enum MsgType {
   Call,       // RPC call, which expects a response.
   Signal,     // A message or a call that doesn't expect a response.
   Resp,       // Response to a call.
-}
-
-export interface StreamingData<Value = unknown, Chunk = unknown> {
-  value: Value;
-  chunks?: AsyncIterable<Chunk>;
-}
-
-/**
- * Defines what we need for sending messages to the other side.
- */
-export interface Sender {
-  sendMessage(msg: IMessage): Promise<void>;
-
-  // If sending should be paused (because it is filling up a buffer which needs to drain), should
-  // return a promise for when sending may resume. Otherwise should return null.
-  waitToDrain(): null|Promise<void>;
-}
-
-export interface StreamingRpcOptions {
-  sender: Sender;
-  logWarn: (message: string, err: Error) => void;
-  callHandler: (callData: StreamingData) => Promise<StreamingData>;
-  signalHandler: (callData: StreamingData) => void;
-  msgToError: (errorFromMsg: unknown) => Error;
-  errorToMsg: (error: Error) => unknown;
-}
-
-export interface StreamingRpc {
-  initialize(options: StreamingRpcOptions): void;
-  makeCall(callData: StreamingData): Promise<StreamingData>;
-  sendSignal(signalData: StreamingData): Promise<void>;
-  dispatch(msg: IMessage): boolean;
 }

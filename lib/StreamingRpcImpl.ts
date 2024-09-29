@@ -1,5 +1,14 @@
 import {IMessage, MsgType, StreamingData, StreamingRpc, StreamingRpcOptions} from './StreamingRpc';
 
+/**
+ * Primary way of creating a StreamingRpc object.
+ */
+export function createStreamingRpc(options: StreamingRpcOptions): StreamingRpc {
+  const rpc: StreamingRpc = new StreamingRpcImpl(options);
+  options.channel.onmessage = (msg: IMessage) => rpc.dispatch(msg);
+  return rpc;
+}
+
 export class SendError extends Error {
   constructor(public origError: Error) {
     super(origError.message);
@@ -18,6 +27,7 @@ type StreamingDataChecked = StreamingData<UniqueTypes["Value"], UniqueTypes["Chu
 interface CallObj {
   reqId: number;
   resolve: (data: StreamingDataChecked | Promise<StreamingDataChecked>) => void;
+  callCleanup?: () => void;
 }
 
 export class StreamingRpcImpl implements StreamingRpc {
@@ -29,6 +39,10 @@ export class StreamingRpcImpl implements StreamingRpc {
 
   constructor(private _options: StreamingRpcOptions) {}
 
+  public get disconnectSignal() {
+    return this._options.channel.disconnectSignal;
+  }
+
   public initialize(options: StreamingRpcOptions): void {
     this._options = options;
   }
@@ -37,10 +51,16 @@ export class StreamingRpcImpl implements StreamingRpc {
     return new Promise<StreamingDataChecked>((resolve, reject) => {
       const reqId = ++this._lastReqId;
       const callObj: CallObj = {reqId, resolve};
+      const abortCall = () => reject(this.disconnectSignal.reason as Error);
+      this.disconnectSignal.addEventListener('abort', abortCall);
       this._pendingCalls.set(reqId, callObj);
+      callObj.callCleanup = () => {
+        this.disconnectSignal.removeEventListener('abort', abortCall);
+        this._pendingCalls.delete(reqId);
+      };
       this._sendStreamingData(MsgType.Call, reqId, callData).catch((err: Error) => {
         // If _sendMessage fails, reject immediately.
-        this._pendingCalls.delete(reqId);
+        callObj.callCleanup?.();
         reject(err);
       });
     });
@@ -61,11 +81,9 @@ export class StreamingRpcImpl implements StreamingRpc {
       const chunks = this._pendingStreams.get(streamKey);
       if (chunks) {
         if (msg.error) {
-          chunks._supplyError(this._options.msgToError(msg.error));
-          this._pendingStreams.delete(streamKey);
+          chunks._supplyError(this._options.channel.msgToError(msg.error));
         } else if (!msg.more) {
           chunks._finishChunks();
-          this._pendingStreams.delete(streamKey);
         } else {
           chunks._supplyChunk(msg.data as UniqueTypes["Chunk"]);
         }
@@ -96,7 +114,8 @@ export class StreamingRpcImpl implements StreamingRpc {
       // the only part where we control how fast we are consuming it.
       try {
         for await (const chunk of data.chunks) {
-          await this._options.sender.waitToDrain();
+          this.disconnectSignal.throwIfAborted();
+          await this._options.channel.waitToDrain();
           await this._sendMessage({mtype, reqId, data: chunk, more: true});
         }
         await this._sendMessage({mtype, reqId});
@@ -104,14 +123,14 @@ export class StreamingRpcImpl implements StreamingRpc {
         if (err instanceof SendError) {
           throw err;
         }
-        await this._sendMessage({mtype, reqId, error: this._options.errorToMsg(err)});
+        await this._sendMessage({mtype, reqId, error: this._options.channel.errorToMsg(err)});
       }
     }
   }
 
   private async _sendMessage(msg: IMessage) {
     try {
-      await this._options.sender.sendMessage(msg);
+      await this._options.channel.sendMessage(msg);
     } catch (err) {
       // Wrap sending errors, to be able to tell them apart from errors that come from handlers.
       throw new SendError(err);
@@ -127,12 +146,13 @@ export class StreamingRpcImpl implements StreamingRpc {
     (async () => {
       try {
         const respData = await this._options.callHandler({value: msg.data, chunks}) as StreamingDataChecked;
+        this.disconnectSignal.throwIfAborted();
         await this._sendStreamingData(MsgType.Resp, reqId, respData);
       } catch (err) {
         if (err instanceof SendError) {
           throw err;
         }
-        await this._sendMessage({mtype: MsgType.Resp, reqId, error: this._options.errorToMsg(err)});
+        await this._sendMessage({mtype: MsgType.Resp, reqId, error: this._options.channel.errorToMsg(err)});
       }
     })().catch((err: Error) => {
       this._options.logWarn('failed to send response', err);
@@ -153,10 +173,10 @@ export class StreamingRpcImpl implements StreamingRpc {
     if (!callObj) {
       throw new Error(`Response to unknown reqId ${msg.reqId}`);
     }
-    this._pendingCalls.delete(msg.reqId);
+    callObj.callCleanup?.();
     if (msg.error) {
       // Call failed.
-      callObj.resolve(Promise.reject<StreamingDataChecked>(this._options.msgToError(msg.error)));
+      callObj.resolve(Promise.reject<StreamingDataChecked>(this._options.channel.msgToError(msg.error)));
     } else {
       const chunks = this._getChunksIfStreaming(msg);
       callObj.resolve({value: msg.data as UniqueTypes["Value"], chunks});
@@ -165,92 +185,38 @@ export class StreamingRpcImpl implements StreamingRpc {
 
   private _getChunksIfStreaming(msg: IMessage): StreamingHelper|undefined {
     if (!msg.more) { return undefined; }
-    // The call itself has a streaming portion.
+    const streamKey = getStreamKey(msg);
     const chunks = new StreamingHelper();
-    this._pendingStreams.set(getStreamKey(msg), chunks);
+    const abortStream = () => chunks._supplyError(this.disconnectSignal.reason);
+    this.disconnectSignal.addEventListener('abort', abortStream);
+    this._pendingStreams.set(streamKey, chunks);
+    chunks._onCleanup(() => {
+      this.disconnectSignal.removeEventListener('abort', abortStream);
+      this._pendingStreams.delete(streamKey);
+    });
     return chunks;
   }
 }
 
-// Encoding of messages. This is specific to parseMessage/serializeMessage. Different variants
-// would be fine, as long as both sides agree. (In particular, protocols more conscious of
-// versioning may be better).
-//
-// Call     C<Flag><ID>:<opaque input>
-// Signal   S<Flag><ID>:<opaque input>
-// Resp     R<Flag><ID>:<opaque result of method>
-//
-// Here, <ID> is reqId, and <Flag> is "+" for `more: true`, and "!" for error (in which case data
-// after ":" is the error portion). If colon (":") is missing, there is no data.
-
-const mtypeCodes: [MsgType, string][] = [
-  [MsgType.Call,    "C"],
-  [MsgType.Signal,  "S"],
-  [MsgType.Resp,    "R"],
-];
-
-const mtypeToCode = new Map<MsgType, string>(mtypeCodes);
-const codeToMtype = new Map<string, MsgType>(mtypeCodes.map(([m, c]) => [c, m]));
-
-export function parseMessage(input: string, parseData: (data: string) => unknown): IMessage {
-  const mtype = codeToMtype.get(input[0]);
-  if (!mtype) {
-    throw new Error("Invalid input message (mtype)");
-  }
-  let reqIdStart = 1;
-  let isError = false;
-  let more = false;
-  if (input[1] === '!') {
-    isError = true;
-    reqIdStart++;
-  } else if (input[1] === '+') {
-    more = true;
-    reqIdStart++;
-  }
-
-  const dataStart = (input.indexOf(":") + 1) || input.length;
-  const reqId = parseInt(input.slice(reqIdStart, dataStart - 1), 10);
-  if (!reqId) {
-    throw new Error("Invalid input message (reqId)");
-  }
-  const data = parseData(input.slice(dataStart));
-  if (isError) {
-    return {mtype, reqId, error: data};
-  } else {
-    return {mtype, reqId, data, more};
-  }
-}
-
-export function serializeMessage(msg: IMessage, serializeData: (data: unknown) => string): string {
-  const code = mtypeToCode.get(msg.mtype);
-  if (!code) {
-    throw new Error("Invalid message (mtype)");
-  }
-  let flag = "";
-  let data = msg.data;
-  if (msg.error) {
-    flag = "!";
-    data = msg.error;
-  } else if (msg.more) {
-    flag = "+";
-  }
-  return code + flag + msg.reqId + ":" + serializeData(data);
-}
-
-//======================================================================
-
-type ChunkIterResult = IteratorResult<UniqueTypes["Chunk"], unknown>;
+type ChunkIterResult = IteratorResult<UniqueTypes["Chunk"], undefined>;
 
 class StreamingHelper implements AsyncIterableIterator<UniqueTypes["Chunk"]> {
   private _queuedChunks: ChunkIterResult[] = [];
   private _queuedCallbacks: Array<(chunk: ChunkIterResult | Promise<ChunkIterResult>) => void>;
-  private _finished = false;    // If finished, will skip further processing.
+  private _cleanupCallback: (() => void) | undefined;
+  // If finished, will skip further processing
+  private _finished = false;
+  // First value to supply to next() when iterator ends (successfully or via exception). Once the
+  // first value is supplied, _endValue is reset, and subsequent calls will return a bland "stream
+  // is done" result, as generators do.
+  private _endValue: Promise<ChunkIterResult> | undefined;
 
   public [Symbol.asyncIterator]() {
     return this;
   }
 
   public next(): Promise<ChunkIterResult> {
+    if (this._finished) { return this._useEndValue(); }
     const chunk = this._queuedChunks.shift();
     if (chunk) {
       return Promise.resolve(chunk);
@@ -261,10 +227,19 @@ class StreamingHelper implements AsyncIterableIterator<UniqueTypes["Chunk"]> {
     }
   }
 
-  public return(value: unknown): Promise<ChunkIterResult> {
+  public return(value: undefined): Promise<ChunkIterResult> {
+    if (this._finished) { return this._useEndValue(); }
     this._finished = true;
-    this._cleanup();
-    return Promise.resolve({value, done: true});
+    const endValue: Promise<ChunkIterResult> = Promise.resolve({value, done: true});
+    this._cleanup(endValue);
+    return endValue;
+  }
+
+  // The method prefixed with underscore are only public for use by StreamingRpcImpl, and should
+  // be considered private by outside users.
+
+  public _onCleanup(cleanupCallback: () => void): void {
+    this._cleanupCallback = cleanupCallback;
   }
 
   public _supplyChunk(chunk: UniqueTypes["Chunk"]): void {
@@ -280,16 +255,29 @@ class StreamingHelper implements AsyncIterableIterator<UniqueTypes["Chunk"]> {
 
   public _supplyError(errObj: Error): void {
     if (this._finished) { return; }
-    for (const callback of this._queuedCallbacks) {
-      callback(Promise.reject(errObj));
-    }
-    this._cleanup();
+    const endValue = Promise.reject(errObj);
+    this._cleanup(endValue);
   }
 
-  private _cleanup() {
+  private _cleanup(endValue?: Promise<ChunkIterResult>) {
+    this._finished = true;
+    this._endValue = endValue;
+    for (const callback of this._queuedCallbacks) {
+      callback(this._useEndValue());
+    }
     this._queuedChunks = [];
     this._queuedCallbacks = [];
-    this._finished = true;
+    this._cleanupCallback?.();
+  }
+
+  private _useEndValue(): Promise<ChunkIterResult> {
+    if (this._endValue) {
+      const endValue = this._endValue;
+      this._endValue = undefined;
+      return endValue;
+    } else {
+      return Promise.resolve({value: undefined, done: true});
+    }
   }
 
   private _pushItem(item: ChunkIterResult) {

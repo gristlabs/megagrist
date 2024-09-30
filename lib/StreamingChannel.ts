@@ -1,11 +1,19 @@
 import {Channel, IMessage, MsgType} from './StreamingRpc';
 import type {WebSocket as WSWebSocket} from 'ws';
 
-// How full ws.bufferedAmount should be before we start waiting.
-const defaultHighWaterMark = 1024 * 512;
+export interface WebSocketChannelOptions {
+  highWaterMark: number;
+  bufferTimeout: number;
+  verbose?: (...args: unknown[]) => void;
+}
 
-// How long to wait, in ms, before re-checking ws.bufferedAmount when it's full.
-const defaultBufferTimeout = 250;
+const defaultOptions: WebSocketChannelOptions = {
+  // How full ws.bufferedAmount should be before we start waiting.
+  highWaterMark: 1024 * 512,
+
+  // How long to wait, in ms, before re-checking ws.bufferedAmount when it's full.
+  bufferTimeout: 250,
+};
 
 export class WebSocketChannel implements Channel {
   private _abortController = new AbortController();
@@ -15,15 +23,13 @@ export class WebSocketChannel implements Channel {
   // for browser WebSocket and for `ws` module. Engine.IO may work differently. TODO this part
   // feels unnecessarily custom, and it would be better to use something more standardized
   // (perhaps websocket-stream?)
-  private _highWaterMark: number;
-  private _bufferTimeout: number;
+  private _options: WebSocketChannelOptions;
   private _drainPromise: Promise<void> | null = null;
   private _drainResolve: (() => void) | null = null;
   private _drainCheckInterval: ReturnType<typeof setInterval> | null = null;
 
-  constructor(private _ws: WebSocket|WSWebSocket, options?: {highWaterMark?: number, bufferTimeout?: number}) {
-    this._highWaterMark = options?.highWaterMark || defaultHighWaterMark;
-    this._bufferTimeout = options?.bufferTimeout || defaultBufferTimeout;
+  constructor(private _ws: WebSocket|WSWebSocket, options?: Partial<WebSocketChannelOptions>) {
+    this._options = {...defaultOptions, ...options};
     _ws.onmessage = this._onWSMessage.bind(this);
     _ws.onclose = this._onWSClose.bind(this);
   }
@@ -37,7 +43,9 @@ export class WebSocketChannel implements Channel {
   }
 
   public async sendMessage(msg: IMessage): Promise<void> {
-    return this._ws.send(serializeMessage(msg, JSON.stringify));
+    const message = serializeMessage(msg, JSON.stringify);
+    this._options.verbose?.("WebSocketChannel sending", message);
+    return this._ws.send(message);
   }
 
   // If sending should be paused (because it is filling up a buffer which needs to drain), should
@@ -50,7 +58,7 @@ export class WebSocketChannel implements Channel {
       this._drainPromise = new Promise((resolve) => {
         this._drainResolve = resolve;
       });
-      this._drainCheckInterval = setInterval(() => this._checkIfDrained(), this._bufferTimeout);
+      this._drainCheckInterval = setInterval(() => this._checkIfDrained(), this._options.bufferTimeout);
     }
     return this._drainPromise;
   }
@@ -72,7 +80,7 @@ export class WebSocketChannel implements Channel {
   }
 
   private _checkIfDrained(): boolean {
-    if (this._ws.bufferedAmount >= this._highWaterMark) {
+    if (this._ws.bufferedAmount >= this._options.highWaterMark) {
       return false;
     }
     if (this._drainCheckInterval) {
@@ -87,6 +95,7 @@ export class WebSocketChannel implements Channel {
   }
 
   private _onWSMessage(ev: MessageEvent<string>) {
+    this._options.verbose?.("WebSocketChannel received", ev.data);
     this._messageHandler?.(parseMessage(ev.data, JSON.parse));
   }
 
@@ -117,7 +126,7 @@ const codeToMtype = new Map<string, MsgType>(mtypeCodes.map(([m, c]) => [c, m]))
 
 function parseMessage(input: string, parseData: (data: string) => unknown): IMessage {
   const mtype = codeToMtype.get(input[0]);
-  if (!mtype) {
+  if (mtype === undefined) {
     throw new Error("Invalid input message (mtype)");
   }
   let reqIdStart = 1;
@@ -136,7 +145,8 @@ function parseMessage(input: string, parseData: (data: string) => unknown): IMes
   if (!reqId) {
     throw new Error("Invalid input message (reqId)");
   }
-  const data = parseData(input.slice(dataStart));
+  const dataStr = input.slice(dataStart);
+  const data = dataStr ? parseData(input.slice(dataStart)) : undefined;
   if (isError) {
     return {mtype, reqId, error: data};
   } else {
@@ -157,5 +167,5 @@ function serializeMessage(msg: IMessage, serializeData: (data: unknown) => strin
   } else if (msg.more) {
     flag = "+";
   }
-  return code + flag + msg.reqId + ":" + serializeData(data);
+  return code + flag + msg.reqId + ":" + (serializeData(data) ?? "");
 }

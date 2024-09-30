@@ -84,6 +84,8 @@ export interface StreamingRpcOptions {
   logWarn: (message: string, err: Error) => void;
   callHandler: (callData: StreamingData) => Promise<StreamingData>;
   signalHandler: (signalData: StreamingData) => void;
+  // A function like console.log for verbose logging.
+  verbose?: (...args: unknown[]) => void;
 }
 
 /**

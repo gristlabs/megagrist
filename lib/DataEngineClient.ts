@@ -1,7 +1,6 @@
 import {IDataEngine} from '../lib/IDataEngine';
-import {StreamingRpc} from '../lib/StreamingRpc';
+import {StreamingRpc, StreamingRpcOptions} from '../lib/StreamingRpc';
 import {createStreamingRpc} from '../lib/StreamingRpcImpl';
-import {WebSocketChannel} from '../lib/StreamingChannel';
 
 export class DataEngineClient implements IDataEngine {
   public fetchQuery = this._makeMethod("fetchQuery");
@@ -13,9 +12,9 @@ export class DataEngineClient implements IDataEngine {
 
   private _rpc: StreamingRpc;
 
-  constructor(channel: WebSocketChannel) {
+  constructor(options: Pick<StreamingRpcOptions, "channel"|"verbose">) {
     this._rpc = createStreamingRpc({
-      channel,
+      ...options,
       logWarn: (message: string, err: Error) => { console.warn(message, err); },
       callHandler: () => { throw new Error("No calls implemented"); },
       signalHandler: () => { throw new Error("No signals implemented"); },

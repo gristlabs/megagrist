@@ -75,6 +75,7 @@ export class StreamingRpcImpl implements StreamingRpc {
    */
   public dispatch(msg: IMessage): boolean {
     try {
+      this._options.verbose?.("Received message: mtype", msg.mtype, "reqId", msg.reqId, "more", msg.more);
       // Check if this message is part of a streaming portion.
       const streamKey = getStreamKey(msg);
       const chunks = this._pendingStreams.get(streamKey);
@@ -144,6 +145,7 @@ export class StreamingRpcImpl implements StreamingRpc {
 
   private async _sendMessage(msg: IMessage) {
     try {
+      this._options.verbose?.("Sending message: mtype", msg.mtype, "reqId", msg.reqId, "more", msg.more);
       await this._options.channel.sendMessage(msg);
     } catch (err) {
       // Wrap sending errors, to be able to tell them apart from errors that come from handlers.
@@ -166,6 +168,7 @@ export class StreamingRpcImpl implements StreamingRpc {
         if (err instanceof SendError) {
           throw err;
         }
+        this._options.verbose?.("Responding with an error", err);
         await this._sendMessage({mtype: MsgType.Resp, reqId, error: this._options.channel.errorToMsg(err)});
       }
     })().catch((err: Error) => {
@@ -211,7 +214,7 @@ type ChunkIterResult = IteratorResult<UniqueTypes["Chunk"], undefined>;
 
 class StreamingHelper implements AsyncIterableIterator<UniqueTypes["Chunk"]> {
   private _queuedChunks: ChunkIterResult[] = [];
-  private _queuedCallbacks: Array<(chunk: ChunkIterResult | Promise<ChunkIterResult>) => void>;
+  private _queuedCallbacks: Array<(chunk: ChunkIterResult | Promise<ChunkIterResult>) => void> = [];
   // If finished, will skip further processing
   private _finished = false;
   // First value to supply to next() when iterator ends (successfully or via exception). Once the
@@ -226,11 +229,11 @@ class StreamingHelper implements AsyncIterableIterator<UniqueTypes["Chunk"]> {
   }
 
   public next(): Promise<ChunkIterResult> {
-    if (this._finished) { return this._useEndValue(); }
     const chunk = this._queuedChunks.shift();
     if (chunk) {
       return Promise.resolve(chunk);
     } else {
+      if (this._finished) { return this._useEndValue(); }
       return new Promise<ChunkIterResult>(resolve => {
         this._queuedCallbacks.push(resolve);
       });
@@ -271,8 +274,8 @@ class StreamingHelper implements AsyncIterableIterator<UniqueTypes["Chunk"]> {
     for (const callback of this._queuedCallbacks) {
       callback(this._useEndValue());
     }
-    this._queuedChunks = [];
     this._queuedCallbacks = [];
+    // We do NOT clear _queuedChunks, next() calls should continue picking them up until the end.
     this._cleanupCallback();
   }
 

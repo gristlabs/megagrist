@@ -1,14 +1,16 @@
 import {IDataEngine} from '../lib/IDataEngine';
-import {StreamingData} from '../lib/StreamingRpc';
+import {StreamingData, StreamingRpcOptions} from '../lib/StreamingRpc';
 import {createStreamingRpc} from '../lib/StreamingRpcImpl';
-import {WebSocketChannel} from '../lib/StreamingChannel';
 
 /**
  * Exposes a IDataEngine implementation as an RPC server over the given channel.
  */
-export function createDataEngineServer(dataEngine: IDataEngine, channel: WebSocketChannel) {
+export function createDataEngineServer(
+  dataEngine: IDataEngine,
+  options: Pick<StreamingRpcOptions, "channel"|"verbose">
+) {
   return createStreamingRpc({
-    channel,
+    ...options,
     logWarn: (message: string, err: Error) => { console.warn(message, err); },
     callHandler: callHandler.bind(null, dataEngine),
     signalHandler: () => { throw new Error("No signals implemented"); },
@@ -40,8 +42,7 @@ async function callHandler(dataEngine: IDataEngine, callData: StreamingData): Pr
   }
 
   const isStreaming = dataEngineMethods[method];
-  const methodFunc = dataEngine[method] as (...args: unknown[]) => Promise<unknown>;
-  const result = await methodFunc(...args);
+  const result = await (dataEngine[method] as (...args: unknown[]) => Promise<unknown>)(...args);
   if (isStreaming) {
     return result as StreamingData;
   } else {

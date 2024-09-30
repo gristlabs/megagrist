@@ -90,6 +90,7 @@ export class WebSocketChannel implements Channel {
     if (this._drainResolve) {
       this._drainResolve();
       this._drainResolve = null;
+      this._drainPromise = null;
     }
     return true;
   }

@@ -62,8 +62,8 @@ export interface Channel {
   // Should be signalled when the channel has disconnected.
   disconnectSignal: AbortSignal;
 
-  // May be set to a callback to call when a message is received.
-  onmessage: (msg: IMessage) => void;
+  // Channel allows setting 'onmessage' callback, and will call it for every message received.
+  set onmessage(cb: (msg: IMessage) => void);
 
   sendMessage(msg: IMessage): Promise<void>;
 

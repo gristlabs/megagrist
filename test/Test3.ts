@@ -6,13 +6,15 @@
 
 import {DataEngine} from '../lib/DataEngine';
 import {createDataEngineServer} from '../lib/DataEngineServer';
-import {DataEngineClient} from '../lib/DataEngineClient';
 import {WebSocketChannel} from '../lib/StreamingChannel';
+import {createStreamingRpc} from '../lib/StreamingRpcImpl';
 import * as sample1 from './sample1';
 import {createTestDir, withTiming} from './testutil';
+import {IpcChannel} from './ipcChannel';
 import {assert} from 'chai';
 import SqliteDatabase from 'better-sqlite3';
 import * as colors from 'ansi-colors';
+import * as childProcess from 'child_process';
 import {AddressInfo} from 'net';
 import * as ws from 'ws';
 
@@ -73,70 +75,12 @@ describe('Test3', function() {
     return dataEngine;
   }
 
-  function addressToUrl(address: string|AddressInfo|null): string {
-    if (!address || typeof address !== 'object') { throw new Error(`Invalid address ${address}`); }
-    return `http://localhost:${address.port}/`;
-  }
-
-  async function getDataEngineClient(address: AddressInfo): Promise<[ws.WebSocket, DataEngineClient]> {
-    const websocket = new ws.WebSocket(addressToUrl(address));
-    await new Promise(resolve => websocket.once('upgrade', resolve));
-    const channel = new WebSocketChannel(websocket, {verbose});
-    return [websocket, new DataEngineClient({channel, verbose})];
-  }
-
-  async function withDataEngineClient<T>(address: AddressInfo, cb: (dataEngine: DataEngineClient) => Promise<T>) {
-    const [websocket, dataEngine] = await getDataEngineClient(address);
-    try {
-      return await cb(dataEngine);
-    } finally {
-      websocket.close();
-    }
-  }
-
-  async function readDBFull(address: AddressInfo, memory: Memory, limit?: number) {
-    return await withDataEngineClient(address, async (dataEngine) => {
-      const result = await dataEngine.fetchQuery({tableId: 'Table1', sort: ['id'], limit});
-      let count = 0;
-      let sumRowIds = 0;
-      for (const rowId of result.tableData.id) {
-        count += 1;
-        if (count % 1000 === 0) {
-          // console.warn("readDB at", count);
-          // Return to event loop occasionally.
-          await new Promise(r => setTimeout(r, 0));
-          memory.note();
-        }
-        sumRowIds += rowId as number;
+  for (const [index, readDBName] of ["readDBStreaming", "readDBFull"].entries()) {
+    describe(`with ${readDBName} ${index}`, function() {
+      function addressToUrl(address: string|AddressInfo|null): string {
+        if (!address || typeof address !== 'object') { throw new Error(`Invalid address ${address}`); }
+        return `http://localhost:${address.port}/`;
       }
-      return {count, sumRowIds};
-    });
-  }
-
-  async function readDBStreaming(address: AddressInfo, memory: Memory, limit?: number) {
-    return await withDataEngineClient(address, async (dataEngine) => {
-      const result = await dataEngine.fetchQueryStreaming({tableId: 'Table1', sort: ['id'], limit}, {
-        timeoutMs: 60_000,
-        chunkRows: 500,
-      });
-      let count = 0;
-      let sumRowIds = 0;
-      for await (const chunk of result.chunks) {
-        console.warn("readDB at", count);
-        // Return to event loop after every chunk of rows.
-        await new Promise(r => setTimeout(r, 0));
-        memory.note();
-        for (const row of chunk) {
-          ++count;
-          sumRowIds += row[0] as number;
-        }
-      }
-      return {count, sumRowIds};
-    });
-  }
-
-  for (const [index, readDB] of [readDBStreaming, readDBFull].entries()) {
-    describe(`with ${readDB.name} ${index}`, function() {
 
       async function createServer(dbPath: string): Promise<ws.Server> {
         // Start websocket server on any available port.
@@ -154,29 +98,42 @@ describe('Test3', function() {
       it('parallel reads', async function() {
         const dbPath = `${testDir}/parallel_reads${index}.grist`;
         await setUpDB(dbPath);
-        const server = await createServer(dbPath);
-        const address = server.address() as AddressInfo;
+        const cleanup: (() => void)[] = [];
         try {
+          const server = await createServer(dbPath);
+          cleanup.push(() => { server.close(); });
+
+          const url = addressToUrl(server.address());
+
+          const childProc = childProcess.fork(`${__dirname}/_test3Child.js`);
+          cleanup.push(() => childProc.kill());
+
+          const childChannel = new IpcChannel(childProc);
+          const childRpc = createStreamingRpc({
+            channel: childChannel,
+            logWarn: (message: string, err: Error) => { console.warn(message, err); },
+            callHandler: () => { throw new Error("No calls implemented"); },
+            signalHandler: () => { throw new Error("No signals implemented"); },
+            verbose,
+          });
+
+          async function readDB(rows: number): Promise<{count: number, sumRowIds: number}> {
+            const result = await childRpc.makeCall({value: {url, rows, readDBName}});
+            return result.value as any;
+          }
 
           const NReps = 25;
-          const NRows = 200_000;
+          const NRows = 100_000;
 
-          await withTiming(`single fetch of ${NRows} rows`, async() => {
-            const memory = new Memory();
-            memory.note();
-            const result = await readDB(address, memory, NRows);
+          await withTiming(`single fetch of ${NRows} rows`, () => withMemory(100, async (memory) => {
+            const result = await readDB(NRows);
             console.warn(`maxDelta: rss ${memory.maxDeltaRss()} MB, heap ${memory.maxDeltaHeap()} MB`);
             assert.equal(result.count, NRows);
             assert.equal(result.sumRowIds, NRows * (NRows + 1) / 2);
-          });
+          }));
 
-          await withTiming(`parallel fetches: ${NReps} of ${NRows} rows`, async () => {
-            // Start off with some garbage-collecting, to reduce variability of results, hopefully.
-            gc?.();
-
-            const memory = new Memory();
-            memory.note();
-            const results = await Promise.all(Array.from(Array(NReps), () => readDB(address, memory, NRows)));
+          await withTiming(`parallel fetches: ${NReps} of ${NRows} rows`, () => withMemory(100, async (memory) => {
+            const results = await Promise.all(Array.from(Array(NReps), () => readDB(NRows)));
             assert.lengthOf(results, NReps);
             console.warn(`maxDelta: rss ${memory.maxDeltaRss()} MB, heap ${memory.maxDeltaHeap()} MB`);
             console.warn(`- per query: rss ${memory.maxDeltaRss() / NReps} MB, ` +
@@ -185,11 +142,26 @@ describe('Test3', function() {
               assert.equal(result.count, NRows);
               assert.equal(result.sumRowIds, NRows * (NRows + 1) / 2);
             }
-          });
+          }));
         } finally {
-          server.close();
+          for (const cleanupCallback of cleanup) {
+            cleanupCallback();
+          }
         }
       });
     });
   }
 });
+
+async function withMemory(intervalMs: number, callback: (memory: Memory) => Promise<void>): Promise<void> {
+  const memory = new Memory();
+  // Start off with some garbage-collecting, to reduce variability of results, hopefully.
+  gc?.();
+  memory.note();
+  const interval = setInterval(() => memory.note(), intervalMs);
+  try {
+    await callback(memory);
+  } finally {
+    clearInterval(interval);
+  }
+}

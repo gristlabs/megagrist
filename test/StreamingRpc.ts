@@ -1,8 +1,8 @@
 // TODO Test a few rpc interactions, including basic streaming, leave TODOs for more tests (errors, etc.)
 
-import {WebSocketChannel} from '../lib/StreamingChannel';
 import {StreamingData, StreamingRpc} from '../lib/StreamingRpc';
 import {createStreamingRpc} from '../lib/StreamingRpcImpl';
+import {WebSocketChannel} from '../lib/WebSocketChannel';
 import {assert} from 'chai';
 import {AddressInfo} from 'net';
 import * as ws from 'ws';

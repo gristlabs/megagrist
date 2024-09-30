@@ -1,8 +1,8 @@
 import * as ws from 'ws';
 import {DataEngineClient} from '../lib/DataEngineClient';
-import {WebSocketChannel} from '../lib/StreamingChannel';
 import {StreamingData} from '../lib/StreamingRpc';
 import {createStreamingRpc} from '../lib/StreamingRpcImpl';
+import {WebSocketChannel} from '../lib/WebSocketChannel';
 import {IpcChannel} from './ipcChannel';
 
 const verbose = process.env.VERBOSE ? console.log : undefined;

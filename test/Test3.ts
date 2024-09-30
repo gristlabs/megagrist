@@ -6,8 +6,8 @@
 
 import {DataEngine} from '../lib/DataEngine';
 import {createDataEngineServer} from '../lib/DataEngineServer';
-import {WebSocketChannel} from '../lib/StreamingChannel';
 import {createStreamingRpc} from '../lib/StreamingRpcImpl';
+import {WebSocketChannel} from '../lib/WebSocketChannel';
 import * as sample1 from './sample1';
 import {createTestDir, withTiming} from './testutil';
 import {IpcChannel} from './ipcChannel';

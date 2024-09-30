@@ -43,7 +43,7 @@ export class DataEngine implements IDataEngine {
     // reads or writes in parallel (on other connections!), but does prevent checkpointing. So
     // there is also a timeout. If the reader of the generator doesn't finish within timeoutMs, the
     // generator will throw an exception, and end the transaction.
-    // TODO this flow, especially error handling, needs careful testing.
+    // TODO this flow, especially timeout and error handling, needs careful testing.
 
     const db = this._db;
 
@@ -149,7 +149,7 @@ export class DataEngine implements IDataEngine {
       // TODO For each subscription, query and queue the data to send to it.
       // NOTE: We could use a separate DB connection with an open read transaction to avoid
       // keeping the write transaction open; consider it if needed for performance.
-      // (Efficient subscriptions are their own project, not done yet.
+      // (Efficient subscriptions are their own project, not done yet.)
 
       return {results};
     }).immediate();

@@ -4,10 +4,10 @@
 
 import {CellValue, DocAction, TableColValues} from './DocActions';
 
-// TODO Filters could be specified in any form that can be safely converted to SQL WHERE clause
-// (doesn't need to be limited to an AND of column-based filters as before). Here, the idea is to
-// use "ParsedPredicateFormula" from Grist's app/common/PredicateFormula.ts.
-// => Consider "jsonlogic", which is multi-language, but no SQL.
+// Filters could be specified in any form that can be safely converted to SQL WHERE clause
+// (doesn't need to be limited to an AND of column-based filters as before). Here, we use
+// "ParsedPredicateFormula" from Grist's app/common/PredicateFormula.ts, whose added benefit is
+// that it is also used to express access rules conditions.
 export type ParsedPredicateFormula = [string, ...(ParsedPredicateFormula|CellValue)[]];
 export type QueryFilters = ParsedPredicateFormula;
 
@@ -42,12 +42,8 @@ export interface Query {
 // Identifier for a subscription, which can be used to unsubscribe.
 export type QuerySubId = number;
 
-/**
- * Results of fetching a table. Includes the table data you would expect.
- */
-export interface QueryResult {
+export interface QueryResultCommon {
   tableId: string;
-  tableData: TableColValues;
 
   // Each state of the database is identified by an actionNum. Each change increments it. (Some
   // merged changes may increment it by more than 1.)
@@ -58,6 +54,21 @@ export interface QueryResult {
 
   // It may also be appropriate to include attachment metadata referred to in tableData.
   // attachments?: TableColValues;
+}
+
+/**
+ * Results of fetching a table. Includes the table data you would expect.
+ */
+export interface QueryResult extends QueryResultCommon {
+  tableData: TableColValues;
+}
+
+/**
+ * Results of fetching a table, with a streaming interface, suitable for StreamingRpc.
+ */
+export interface QueryResultStreaming {
+  value: QueryResultCommon & {colIds: string[]};
+  chunks: AsyncIterable<CellValue[][]>;
 }
 
 /**

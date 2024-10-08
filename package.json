@@ -5,7 +5,7 @@
   "scripts": {
     "build": "PRODUCTION=1 ./buildtools/build",
     "watch": "WATCH=1 ./buildtools/build",
-    "test": "./buildtools/build && mocha dist/dev/test/**/*.js"
+    "test": "./buildtools/build && mocha dist/dev/test/**/*.js ${DEBUG:+'-b'} -g \"${GREP_TESTS}\" -n expose-gc"
   },
   "keywords": [],
   "author": {
@@ -14,7 +14,8 @@
   },
   "dependencies": {
     "better-sqlite3": "^11.3.0",
-    "source-map-support": "^0.5.21"
+    "source-map-support": "^0.5.21",
+    "ws": "^8.18.0"
   },
   "devDependencies": {
     "@babel/eslint-parser": "^7.25.1",
@@ -24,6 +25,7 @@
     "@types/chai": "^4.3.19",
     "@types/mocha": "^10.0.8",
     "@types/node": "^22.5.4",
+    "@types/ws": "^8.5.12",
     "@typescript-eslint/eslint-plugin": "^8.4.0",
     "chai": "^4.5.0",
     "esbuild": "^0.23.1",

@@ -1,7 +1,8 @@
 import {DataEngine} from '../lib/DataEngine';
-import {DocAction} from '../lib/DocActions';
+import {Deps as StoreDocActionDeps} from '../lib/StoreDocAction';
 import {QueryCursor, QueryFilters, QueryResult} from '../lib/types';
-import {createTestDir} from './testutil';
+import * as sample1 from './sample1';
+import {changePropertyForTest, createTestDir, withTiming} from './testutil';
 import {assert} from 'chai';
 import SqliteDatabase from 'better-sqlite3';
 
@@ -13,52 +14,36 @@ describe('Test1', function() {
     testDir = await createTestDir('Test1');
   });
 
-  it('scenario 1', async function() {
-    // Create database in a tmp directory.
-    const db: SqliteDatabase.Database = SqliteDatabase(`${testDir}/scenario1.grist`, {
-      verbose: process.env.VERBOSE ? console.log : undefined
-    });
-    db.exec("PRAGMA journal_mode=WAL");
-    const dataEngine = new DataEngine(db);
+  for (const virtualTables of [false, true]) {
+    describe(`with USE_VIRTUAL_TABLES=${virtualTables}`, function() {
+      changePropertyForTest(StoreDocActionDeps, 'USE_VIRTUAL_TABLES', virtualTables);
 
-    // Run actions to create a table.
-    await withTiming("create table", () => {
-      return dataEngine.applyActions({actions: [
-        ['AddTable', 'Table1', [
-          {id: 'Name', type: 'Text'},
-          {id: 'Email', type: 'Text'},
-          {id: 'DOB', type: 'Date'},
-          {id: 'Age', type: 'Numeric'},
-        ]]
-      ]});
-    });
+      it('scenario 1', async function() {
+        // Create database in a tmp directory.
+        const dbPath = `${testDir}/scenario1-${virtualTables}.grist`;
+        const db: SqliteDatabase.Database = SqliteDatabase(dbPath, {
+          verbose: process.env.VERBOSE ? console.log : undefined
+        });
+        db.exec("PRAGMA journal_mode=WAL");
+        const dataEngine = new DataEngine(db);
 
-    // Run actions to create 1m rows in this table.
-    await withTiming("populate table", async () => {
-      for (let chunk = 0; chunk < 1000; chunk++) {
-        const array = Array(1000);
-        const offset = chunk * array.length;
-        const addAction: DocAction = ['BulkAddRecord',
-          'Table1',
-          Array.from(array, (x, i) => offset + i + 1), {
-            Name: Array.from(array, (x, i) => `Bob #${offset + i}`),
-            Email: Array.from(array, (x, i) => `bob${offset + i}@example.com`),
-            DOB: Array.from(array, (x, i) => 1000000000 + (offset + i) * 86400),
-            Age: Array.from(array, (x, i) => Math.floor(i / 10)),
-          }
-        ];
-        await dataEngine.applyActions({actions: [addAction]});
-      }
-    });
+        // Run actions to create a table.
+        await withTiming("create table", () =>
+          sample1.createTable(dataEngine, 'Table1'));
 
-    const db2: SqliteDatabase.Database = SqliteDatabase(`${testDir}/scenario1.grist`, {
-      verbose: process.env.VERBOSE ? console.log : undefined
-    });
-    const dataEngine2 = new DataEngine(db2);
-    await runQueries("same connection", dataEngine);
-    await runQueries("new connection", dataEngine2);
+        // Run actions to create 1m rows in this table.
+        await withTiming("populate table", () =>
+          sample1.populateTable(dataEngine, 'Table1', 1000, 1000));
 
-  });
+        const db2: SqliteDatabase.Database = SqliteDatabase(dbPath, {
+          verbose: process.env.VERBOSE ? console.log : undefined
+        });
+        const dataEngine2 = new DataEngine(db2);
+        await runQueries("same connection", dataEngine);
+        await runQueries("new connection", dataEngine2);
+      });
+    });
+  }
 
   async function runQueries(desc: string, dataEngine: DataEngine) {
     // Run query to read this table.
@@ -78,7 +63,7 @@ describe('Test1', function() {
         if (!result.tableData.id.length) {
           break;
         }
-        assert.equal(result.tableData.id[0], prevResult ? last(prevResult.tableData.id) + 1 : 1);
+        assert.equal(result.tableData.id[0], prevResult ? last(prevResult.tableData.id as number[]) + 1 : 1);
         prevResult = result;
         cursor = ["after", [last(result.tableData.id)]];
       }
@@ -87,13 +72,3 @@ describe('Test1', function() {
 });
 
 function last<T>(arr: T[]): T { return arr[arr.length - 1]; }
-
-async function withTiming<T>(desc: string, func: () => Promise<T>): Promise<T> {
-  const start = Date.now();
-  try {
-    return await func();
-  } finally {
-    const end = Date.now();
-    console.log(`${desc}: took ${end - start}ms`);
-  }
-}

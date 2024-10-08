@@ -8,6 +8,10 @@ import 'mocha';
 // Enable source-map-support for stack traces.
 import 'source-map-support/register';
 
+/**
+ * Create test directory named suiteName under process.env.TESTDIR, defaulting to ./_testoutputs.
+ * Hard-deletes any directory already there.
+ */
 export async function createTestDir(suiteName: string): Promise<string> {
   const tmpRootDir = process.env.TESTDIR || "./_testoutputs";
   const testDir = path.join(tmpRootDir, suiteName);
@@ -16,4 +20,34 @@ export async function createTestDir(suiteName: string): Promise<string> {
   await fs.mkdir(testDir, {recursive: true});
   console.warn(`Test logs and data are at: ${testDir}/`);
   return testDir;
+}
+
+/**
+ * Times execution of func(). Prints out the time to console, and returns func's return value.
+ */
+export async function withTiming<T>(desc: string, func: () => Promise<T>): Promise<T> {
+  const start = Date.now();
+  try {
+    return await func();
+  } finally {
+    const end = Date.now();
+    console.log(`${desc}: took ${end - start}ms`);
+  }
+}
+
+/**
+ * Add before()/after() callbacks to set obj[key] to newValue before the test, and restore the
+ * previous value after.
+ */
+export function changePropertyForTest<T, P extends keyof T>(obj: T, key: P, newValue: T[P]) {
+  let previous: T[P];
+
+  before(() => {
+    previous = obj[key];
+    obj[key] = newValue;
+  });
+
+  after(() => {
+    obj[key] = previous;
+  });
 }

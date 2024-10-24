@@ -34,7 +34,8 @@ export class BindParams {
  */
 export function sqlSelectFromQuery(query: Query, params: BindParams): string {
   const conditions = sqlSelectConditionsFromQuery('', query, params);
-  return `SELECT * FROM ${quoteIdent(query.tableId)} ${conditions}`;
+  const columns = query.columns ? query.columns.map(c => quoteIdent(c)).join(", ") : '*';
+  return `SELECT ${columns} FROM ${quoteIdent(query.tableId)} ${conditions}`;
 }
 
 /**
@@ -43,12 +44,20 @@ export function sqlSelectFromQuery(query: Query, params: BindParams): string {
  * or '' to omit the prefix). This helps for using the SQL in JOINs.
  */
 export function sqlSelectConditionsFromQuery(namePrefix: string, query: Query, params: BindParams): string {
-  const filterExpr = query.filters ? sqlExprFromFilters(namePrefix, query.filters, params) : '1';
+  const filterExpr = query.filters ? sqlExprFromFilters(namePrefix, query.filters, params) : null;
   const cursorExpr = query.cursor ? sqlExprFromCursor(namePrefix, query.sort, query.cursor, params) : null;
-  const whereExpr = cursorExpr ? `(${filterExpr}) AND (${cursorExpr})` : filterExpr;
-  const orderBy = query.sort !== undefined ? `ORDER BY ${sqlOrderByFromSort(namePrefix, query.sort)}` : '';
+  const rowsExpr = query.rowIds ? sqlExprFromRowIds(query.rowIds) : null;
+  const whereExpr = [filterExpr, cursorExpr, rowsExpr].filter(Boolean).map(expr => `(${expr})`).join(' AND ') || '1';
+  const orderBy = query.sort?.length ? `ORDER BY ${sqlOrderByFromSort(namePrefix, query.sort)}` : '';
   const limit = typeof query.limit === 'number' ? `LIMIT ${query.limit}` : '';
   return `WHERE ${whereExpr} ${orderBy} ${limit}`;
+}
+
+function sqlExprFromRowIds(rowIds: number[]) {
+  if (!rowIds.every(Number.isInteger)) {
+    throw new Error("Expected all rowIds to be integers");
+  }
+  return `id in (${rowIds})`;
 }
 
 function sqlExprFromFilters(namePrefix: string, filters: ParsedPredicateFormula, params: BindParams): string {

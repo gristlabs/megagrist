@@ -37,6 +37,8 @@ export interface Query {
   sort?: OrderByClause;
   limit?: number;
   cursor?: QueryCursor;     // Which value to start returning results from.
+  columns?: string[];
+  rowIds?: number[];
 }
 
 // Identifier for a subscription, which can be used to unsubscribe.

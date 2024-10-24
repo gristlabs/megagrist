@@ -48,7 +48,7 @@ export function sqlSelectConditionsFromQuery(namePrefix: string, query: Query, p
   const cursorExpr = query.cursor ? sqlExprFromCursor(namePrefix, query.sort, query.cursor, params) : null;
   const rowsExpr = query.rowIds ? sqlExprFromRowIds(query.rowIds) : null;
   const whereExpr = [filterExpr, cursorExpr, rowsExpr].filter(Boolean).map(expr => `(${expr})`).join(' AND ') || '1';
-  const orderBy = query.sort?.length ? `ORDER BY ${sqlOrderByFromSort(namePrefix, query.sort)}` : '';
+  const orderBy = `ORDER BY ${sqlOrderByFromSort(namePrefix, query.sort)}`
   const limit = typeof query.limit === 'number' ? `LIMIT ${query.limit}` : '';
   return `WHERE ${whereExpr} ${orderBy} ${limit}`;
 }
@@ -100,14 +100,17 @@ function sqlExprFromFilters(namePrefix: string, filters: ParsedPredicateFormula,
   return compileNode(filters);
 }
 
-function sqlOrderByFromSort(namePrefix: string, sort: OrderByClause): string {
+function sqlOrderByFromSort(namePrefix: string, sort: OrderByClause|undefined): string {
   const parts: string[] = [];
-  for (const colSpec of sort) {
-    const isDesc = colSpec.startsWith('-');
-    const colId = isDesc ? colSpec.slice(1) : colSpec;
-    const fullColId = namePrefix + quoteIdent(colId);
-    parts.push(`${fullColId} ${isDesc ? 'DESC' : 'ASC'}`);
+  if (sort) {
+    for (const colSpec of sort) {
+      const isDesc = colSpec.startsWith('-');
+      const colId = isDesc ? colSpec.slice(1) : colSpec;
+      const fullColId = namePrefix + quoteIdent(colId);
+      parts.push(`${fullColId} ${isDesc ? 'DESC' : 'ASC'}`);
+    }
   }
+  parts.push('id');
   return parts.join(', ');
 }
 

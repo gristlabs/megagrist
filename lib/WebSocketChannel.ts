@@ -15,6 +15,13 @@ const defaultOptions: WebSocketChannelOptions = {
   bufferTimeout: 250,
 };
 
+export interface MinimalWebSocket {
+  set onmessage(cb: null | ((data: string) => void));
+  set onclose(cb: null | (() => void));
+  send(data: string): void;
+  get bufferedAmount(): number;
+}
+
 export class WebSocketChannel implements Channel {
   private _abortController = new AbortController();
   private _messageHandler: ((msg: IMessage) => void) | null = null;
@@ -28,7 +35,7 @@ export class WebSocketChannel implements Channel {
   private _drainResolve: (() => void) | null = null;
   private _drainCheckInterval: ReturnType<typeof setInterval> | null = null;
 
-  constructor(private _ws: WebSocket|WSWebSocket, options?: Partial<WebSocketChannelOptions>) {
+  constructor(private _ws: MinimalWebSocket|WebSocket|WSWebSocket, options?: Partial<WebSocketChannelOptions>) {
     this._options = {...defaultOptions, ...options};
     _ws.onmessage = this._onWSMessage.bind(this);
     _ws.onclose = this._onWSClose.bind(this);
@@ -95,9 +102,10 @@ export class WebSocketChannel implements Channel {
     return true;
   }
 
-  private _onWSMessage(ev: MessageEvent<string>) {
-    this._options.verbose?.("WebSocketChannel received", ev.data);
-    this._messageHandler?.(parseMessage(ev.data, JSON.parse));
+  private _onWSMessage(ev: string|MessageEvent<string>) {
+    const data = typeof ev === 'string' ? ev : ev.data;
+    this._options.verbose?.("WebSocketChannel received", data);
+    this._messageHandler?.(parseMessage(data, JSON.parse));
   }
 
   private _onWSClose() {

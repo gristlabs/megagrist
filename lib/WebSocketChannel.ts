@@ -73,9 +73,9 @@ export class WebSocketChannel implements Channel {
   // Turns a {message, code?} object into an Error with an optional `code` property.
   public msgToError(msgError: unknown): Error {
     const obj = (msgError && typeof msgError === 'object') ? msgError : {};
-    const message = ('message' in obj && typeof obj.message === 'string') ? obj.message : 'Unknown remote error';
+    const message = (hasProperty(obj, 'message') && typeof obj.message === 'string') ? obj.message : 'Unknown remote error';
     const error = new Error(message);
-    if ('code' in obj) {
+    if (hasProperty(obj, 'code')) {
       (error as any).code = obj.code;
     }
     return error;
@@ -83,7 +83,7 @@ export class WebSocketChannel implements Channel {
 
   // Turns an Error into {message, code?} object.
   public errorToMsg(error: Error): unknown {
-    return {message: error.message, ...('code' in error ? {code: error.code} : {})};
+    return {message: error.message, ...(hasProperty(error, 'code') ? {code: error.code} : {})};
   }
 
   private _checkIfDrained(): boolean {
@@ -177,4 +177,9 @@ function serializeMessage(msg: IMessage, serializeData: (data: unknown) => strin
     flag = "+";
   }
   return code + flag + msg.reqId + ":" + (serializeData(data) ?? "");
+}
+
+// Workaround for older versions of typescript not inferring anything from "prop in obj".
+function hasProperty<Obj, T extends string>(obj: Obj, prop: T): obj is Obj & {[prop in T]: unknown} {
+  return prop in obj;
 }

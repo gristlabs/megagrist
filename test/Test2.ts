@@ -5,7 +5,7 @@ import {assert} from 'chai';
 import SqliteDatabase from 'better-sqlite3';
 import * as colors from 'ansi-colors';
 
-interface Stat { first?: number, max?: number, last?: number };
+interface Stat { first?: number, max?: number, last?: number }
 
 function updateStat(stat: Stat, value: number) {
   if (stat.first === undefined) {

@@ -3,6 +3,7 @@ import {ActionSet, ApplyResultSet, Query, QueryResult, QueryResultStreaming, Que
 export interface QueryStreamingOptions {
   timeoutMs: number;    // Abort if call doesn't complete in this long (e.g. client isn't reading).
   chunkRows: number;    // How many rows to include in a chunk. There is some per-chunk overhead.
+  abortSignal?: AbortSignal;   // A way to abort a query if caller no longer needs it.
 }
 
 export type QuerySubCallback = (actionSet: ActionSet) => void;

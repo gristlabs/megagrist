@@ -40,17 +40,21 @@ abstract class BaseDataEngine implements IDataEngine {
     // reads or writes in parallel (on other connections!), but does prevent checkpointing. So
     // there is also a timeout. If the reader of the generator doesn't finish within timeoutMs, the
     // generator will throw an exception, and end the transaction.
-    // TODO this flow, especially timeout and error handling, needs careful testing.
+    // TODO this flow, especially abortSignal, timeout and error handling, needs careful testing.
     // Also acquireDB/releaseDB adds complexity. (Not that the new "using" construct might
     // simplify this substantially!)
 
-    let abortTimer: ReturnType<typeof setTimeout>|undefined;
+    const timeoutSignal = AbortSignal.timeout(options.timeoutMs);
+    const abortSignal = options.abortSignal ?
+      AbortSignal.any([options.abortSignal, timeoutSignal]) : timeoutSignal;
+
+    // let abortTimer: ReturnType<typeof setTimeout>|undefined;
     let iterator: IterableIterator<CellValue[]>|undefined;
 
+    let cleanupCalled = false;
     const cleanup = () => {
-      if (abortTimer) {
-        clearTimeout(abortTimer);
-      }
+      cleanupCalled = true;
+      abortSignal.removeEventListener('abort', cleanup);
       iterator?.return?.();
       db.exec('ROLLBACK');
       this.releaseDB(db);
@@ -63,14 +67,8 @@ abstract class BaseDataEngine implements IDataEngine {
       this.releaseDB(db);
       throw e;
     }
+    abortSignal.addEventListener('abort', cleanup);
     try {
-      let timedOut = false;
-      const onTimeout = () => {
-        timedOut = true;
-        cleanup();
-      };
-      abortTimer = setTimeout(onTimeout, options.timeoutMs);
-
       // This may be needed to force a snapshot to be taken (not sure). More sensibly, this may be
       // a good time to get actionNum (to identify the current state of the DB).
       // db.exec('SELECT 1');
@@ -85,18 +83,17 @@ abstract class BaseDataEngine implements IDataEngine {
             chunk.push(row);
             if (chunk.length === options.chunkRows) {
               yield chunk;
+              abortSignal.throwIfAborted();
               chunk = [];
-            }
-            if (timedOut) {
-              throw new Error("Timed out");
             }
           }
           if (chunk.length > 0) {
             yield chunk;
+            abortSignal.throwIfAborted();
             chunk = [];
           }
         } finally {
-          if (!timedOut) {
+          if (!cleanupCalled) {
             cleanup();
           }
         }

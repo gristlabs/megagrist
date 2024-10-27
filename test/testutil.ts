@@ -1,5 +1,9 @@
 import fs from 'fs/promises';
 import path from 'path';
+import * as chai from 'chai';
+import chaiAsPromised from 'chai-as-promised';
+
+chai.use(chaiAsPromised);
 
 // Having a file that imports mocha allows using describe() and it() globals in tests. It is an
 // alternative to including `"types": ["mocha"]` into tsconfig.json.

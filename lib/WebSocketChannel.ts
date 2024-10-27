@@ -73,7 +73,8 @@ export class WebSocketChannel implements Channel {
   // Turns a {message, code?} object into an Error with an optional `code` property.
   public msgToError(msgError: unknown): Error {
     const obj = (msgError && typeof msgError === 'object') ? msgError : {};
-    const message = (hasProperty(obj, 'message') && typeof obj.message === 'string') ? obj.message : 'Unknown remote error';
+    const message = (hasProperty(obj, 'message') && typeof obj.message === 'string') ?
+      obj.message : 'Unknown remote error';
     const error = new Error(message);
     if (hasProperty(obj, 'code')) {
       (error as any).code = obj.code;
@@ -180,6 +181,6 @@ function serializeMessage(msg: IMessage, serializeData: (data: unknown) => strin
 }
 
 // Workaround for older versions of typescript not inferring anything from "prop in obj".
-function hasProperty<Obj, T extends string>(obj: Obj, prop: T): obj is Obj & {[prop in T]: unknown} {
+function hasProperty<Obj extends object, T extends string>(obj: Obj, prop: T): obj is Obj & {[prop in T]: unknown} {
   return prop in obj;
 }

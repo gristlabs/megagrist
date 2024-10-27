@@ -5,19 +5,16 @@ import {BindParams, sqlSelectFromQuery} from './sqlConstruct';
 import {StoreDocAction} from './StoreDocAction';
 import SqliteDatabase from 'better-sqlite3';
 
-export class DataEngine implements IDataEngine {
+abstract class BaseDataEngine implements IDataEngine {
   private _querySubs = new Map<number, Query>();
   private _nextQuerySub = 1;
-
-  constructor(private _db: SqliteDatabase.Database) {
-  }
 
   public async fetchQuery(query: Query): Promise<QueryResult> {
     const bindParams = new BindParams();
     const sql = sqlSelectFromQuery(query, bindParams);
     // console.warn("RUNNING SQL", sql, bindParams.getParams());
-    const stmt = this._db.prepare(sql);
-    return this._db.transaction(() => {
+    return this.withDB((db) => db.transaction(() => {
+      const stmt = db.prepare(sql);
       const rows = stmt.raw().all(bindParams.getParams()) as CellValue[][];
       // console.warn("RESULT", rows);
       const queryResult: QueryResult = {
@@ -29,7 +26,7 @@ export class DataEngine implements IDataEngine {
         queryResult.tableData[col.name] = rows.map(r => r[index]);
       }
       return queryResult;
-    })();
+    })());
   }
 
   public async fetchQueryStreaming(query: Query, options: QueryStreamingOptions): Promise<QueryResultStreaming> {
@@ -44,8 +41,8 @@ export class DataEngine implements IDataEngine {
     // there is also a timeout. If the reader of the generator doesn't finish within timeoutMs, the
     // generator will throw an exception, and end the transaction.
     // TODO this flow, especially timeout and error handling, needs careful testing.
-
-    const db = this._db;
+    // Also acquireDB/releaseDB adds complexity. (Not that the new "using" construct might
+    // simplify this substantially!)
 
     let abortTimer: ReturnType<typeof setTimeout>|undefined;
     let iterator: IterableIterator<CellValue[]>|undefined;
@@ -56,9 +53,16 @@ export class DataEngine implements IDataEngine {
       }
       iterator?.return?.();
       db.exec('ROLLBACK');
+      this.releaseDB(db);
     };
 
-    db.exec('BEGIN');
+    const db = this.acquireDB();
+    try {
+      db.exec('BEGIN');
+    } catch (e) {
+      this.releaseDB(db);
+      throw e;
+    }
     try {
       let timedOut = false;
       const onTimeout = () => {
@@ -71,7 +75,7 @@ export class DataEngine implements IDataEngine {
       // a good time to get actionNum (to identify the current state of the DB).
       // db.exec('SELECT 1');
 
-      const stmt = this._db.prepare<unknown[], CellValue[]>(sql);
+      const stmt = db.prepare<unknown[], CellValue[]>(sql);
 
       async function *generateRows() {
         try {
@@ -135,13 +139,13 @@ export class DataEngine implements IDataEngine {
   }
 
   public async applyActions(actionSet: ActionSet): Promise<ApplyResultSet> {
-    return this._db.transaction((): ApplyResultSet => {
+    return this.withDB((db) => db.transaction((): ApplyResultSet => {
       // TODO: In the future, we need to pass actionSet through Access Rules,
       // Data Engine (to trigger anything synchronous), Access Rules again, all within a
       // transaction to ensure we are seeing a consistent view of DB and no other connection
       // attempts to write meanwhile.
 
-      const storeDocAction = new StoreDocAction(this._db);
+      const storeDocAction = new StoreDocAction(db);
       const results: unknown[] = [];
       for (const action of actionSet.actions) {
         results.push(storeDocAction.store(action));
@@ -152,7 +156,22 @@ export class DataEngine implements IDataEngine {
       // (Efficient subscriptions are their own project, not done yet.)
 
       return {results};
-    }).immediate();
+    }).immediate());
+  }
+
+  protected abstract acquireDB(): SqliteDatabase.Database;
+  protected abstract releaseDB(db: SqliteDatabase.Database): void;
+
+  // Get a DB connection, and run the callback with it. It intentionally supports only synchronous
+  // functions (like db.transaction()) -- anything async or streaming needs more care, in
+  // particular to ensure we don't hold up a DB connection indefinitely.
+  protected withDB<T>(callback: (db: SqliteDatabase.Database) => T): T {
+    const db = this.acquireDB();
+    try {
+      return callback(db);
+    } finally {
+      this.releaseDB(db);
+    }
   }
 
   private _doQuerySubscribe(query: Query, callback: QuerySubCallback): QuerySubId {
@@ -160,5 +179,45 @@ export class DataEngine implements IDataEngine {
     this._querySubs.set(subId, query);
     return subId;
   }
+}
 
+export class DataEngine extends BaseDataEngine {
+  constructor(private _db: SqliteDatabase.Database) {
+    super();
+  }
+  protected acquireDB(): SqliteDatabase.Database { return this._db; }
+  protected releaseDB(db: SqliteDatabase.Database): void {}
+}
+
+export class DataEnginePooled extends BaseDataEngine {
+  // TODO Probably a good idea to enforce some sort of max, and possibly also to clean up unused
+  // connections after a spike, since unused connections at the minimum use up file descriptors.
+  private _connectionPool: SqliteDatabase.Database[] = [];
+  private _totalConnections = 0;
+  private _inUseConnections = 0;
+
+  constructor(private _dbPath: string, private _dbOptions: SqliteDatabase.Options) {
+    super();
+    this._connectionPool.push(this._createConnection());
+  }
+
+  protected acquireDB(): SqliteDatabase.Database {
+    const db = this._connectionPool.pop() || this._createConnection();
+    this._inUseConnections++;
+    console.log(`DB ${this._dbPath}: acquire; ${this._inUseConnections} now in use`);
+    return db;
+  }
+
+  protected releaseDB(db: SqliteDatabase.Database): void {
+    this._connectionPool.push(db);
+    this._inUseConnections--;
+    console.log(`DB ${this._dbPath}: release; ${this._inUseConnections} now in use`);
+  }
+
+  private _createConnection() {
+    const conn = SqliteDatabase(this._dbPath, this._dbOptions);
+    this._totalConnections++;
+    console.log(`DB ${this._dbPath}: added connection for a total of ${this._totalConnections}`);
+    return conn;
+  }
 }

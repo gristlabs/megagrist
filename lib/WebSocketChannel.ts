@@ -122,8 +122,11 @@ export class WebSocketChannel implements Channel {
 // Signal   S<Flag><ID>:<opaque input>
 // Resp     R<Flag><ID>:<opaque result of method>
 //
-// Here, <ID> is reqId, and <Flag> is "+" for `more: true`, and "!" for error (in which case data
-// after ":" is the error portion). If colon (":") is missing, there is no data.
+// Here, <ID> is reqId, and <Flag> is:
+//  - "+" for `more: true`,
+//  - "!" for error (in which case data after ":" is the error portion).
+//  - "#" for abort
+// If colon (":") is missing, there is no data.
 
 const mtypeCodes: [MsgType, string][] = [
   [MsgType.Call,    "C"],
@@ -142,11 +145,15 @@ function parseMessage(input: string, parseData: (data: string) => unknown): IMes
   let reqIdStart = 1;
   let isError = false;
   let more = false;
-  if (input[1] === '!') {
+  let abort = false;
+  if (input[1] === "!") {
     isError = true;
     reqIdStart++;
-  } else if (input[1] === '+') {
+  } else if (input[1] === "+") {
     more = true;
+    reqIdStart++;
+  } else if (input[1] === "#") {
+    abort = true;
     reqIdStart++;
   }
 
@@ -160,7 +167,7 @@ function parseMessage(input: string, parseData: (data: string) => unknown): IMes
   if (isError) {
     return {mtype, reqId, error: data};
   } else {
-    return {mtype, reqId, data, more};
+    return {mtype, reqId, data, more, abort};
   }
 }
 
@@ -176,6 +183,8 @@ function serializeMessage(msg: IMessage, serializeData: (data: unknown) => strin
     data = msg.error;
   } else if (msg.more) {
     flag = "+";
+  } else if (msg.abort) {
+    flag = "#";
   }
   return code + flag + msg.reqId + ":" + (serializeData(data) ?? "");
 }

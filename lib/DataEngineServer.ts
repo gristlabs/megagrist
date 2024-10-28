@@ -27,7 +27,9 @@ const dataEngineMethods: {[key in keyof IDataEngine]: boolean} = {
   applyActions: false,
 };
 
-async function callHandler(dataEngine: IDataEngine, callData: StreamingData): Promise<StreamingData> {
+async function callHandler(
+  dataEngine: IDataEngine, callData: StreamingData, abortSignal?: AbortSignal
+): Promise<StreamingData> {
   // Parameters of methods are packaged as {value: [method, ...args]}.
   // Result is the `.value` property of the returned data, except for calls with streaming
   // results, for which the complete returned data is the result.
@@ -42,7 +44,7 @@ async function callHandler(dataEngine: IDataEngine, callData: StreamingData): Pr
   }
 
   const isStreaming = dataEngineMethods[method];
-  const result = await (dataEngine[method] as (...args: unknown[]) => Promise<unknown>)(...args);
+  const result = await (dataEngine[method] as (...args: unknown[]) => Promise<unknown>)(...args, abortSignal);
   if (isStreaming) {
     return result as StreamingData;
   } else {

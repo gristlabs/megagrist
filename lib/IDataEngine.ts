@@ -3,7 +3,6 @@ import {ActionSet, ApplyResultSet, Query, QueryResult, QueryResultStreaming, Que
 export interface QueryStreamingOptions {
   timeoutMs: number;    // Abort if call doesn't complete in this long (e.g. client isn't reading).
   chunkRows: number;    // How many rows to include in a chunk. There is some per-chunk overhead.
-  abortSignal?: AbortSignal;   // A way to abort a query if caller no longer needs it.
 }
 
 export type QuerySubCallback = (actionSet: ActionSet) => void;
@@ -14,7 +13,9 @@ export type QuerySubCallback = (actionSet: ActionSet) => void;
 export interface IDataEngine {
   fetchQuery(query: Query): Promise<QueryResult>;
 
-  fetchQueryStreaming(query: Query, options: QueryStreamingOptions): Promise<QueryResultStreaming>;
+  fetchQueryStreaming(
+    query: Query, options: QueryStreamingOptions, abortSignal?: AbortSignal
+  ): Promise<QueryResultStreaming>;
 
   // See querySubscribe for requirements on unsubscribing.
   fetchAndSubscribe(query: Query, callback: QuerySubCallback): Promise<QueryResult>;

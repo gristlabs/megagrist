@@ -37,6 +37,9 @@ export class StreamingRpcImpl implements StreamingRpc {
   // streamKey of `${mtype}:${reqId}`.
   private _pendingStreams = new Map<string, StreamingHelper>();
 
+  // Any time we make a call, we keep an AbortController in case the other side wants to abort it.
+  private _callControllers = new Map<number, AbortController>();
+
   public initialize(options: StreamingRpcOptions): void {
     this._options = options;
     options.channel.onmessage = this.dispatch.bind(this);
@@ -52,10 +55,11 @@ export class StreamingRpcImpl implements StreamingRpc {
     return this._options.channel.disconnectSignal;
   }
 
-  public makeCall(callData: StreamingDataChecked): Promise<StreamingDataChecked> {
+  public makeCall(callData: StreamingDataChecked, abortSignal?: AbortSignal): Promise<StreamingDataChecked> {
     return new Promise<StreamingDataChecked>((resolve, reject) => {
       const reqId = ++this._lastReqId;
       const callObj: CallObj = {reqId, resolve};
+      abortSignal?.addEventListener('abort', this._sendAbort.bind(this, reqId));
       this._pendingCalls.set(reqId, callObj);
       this._sendStreamingData(MsgType.Call, reqId, callData).catch((err: Error) => {
         // If _sendMessage fails, reject immediately.
@@ -75,7 +79,8 @@ export class StreamingRpcImpl implements StreamingRpc {
    */
   public dispatch(msg: IMessage): boolean {
     try {
-      this._options.verbose?.("Received message: mtype", msg.mtype, "reqId", msg.reqId, "more", msg.more);
+      this._options.verbose?.("Received message:", pick(msg, 'mtype', 'reqId', 'more', 'abort'));
+
       // Check if this message is part of a streaming portion.
       const streamKey = getStreamKey(msg);
       const chunks = this._pendingStreams.get(streamKey);
@@ -145,11 +150,19 @@ export class StreamingRpcImpl implements StreamingRpc {
 
   private async _sendMessage(msg: IMessage) {
     try {
-      this._options.verbose?.("Sending message: mtype", msg.mtype, "reqId", msg.reqId, "more", msg.more);
+      this._options.verbose?.("Sending message:", pick(msg, 'mtype', 'reqId', 'more', 'abort'));
       await this._options.channel.sendMessage(msg);
     } catch (err) {
       // Wrap sending errors, to be able to tell them apart from errors that come from handlers.
       throw new SendError(err);
+    }
+  }
+
+  private _sendAbort(reqId: number) {
+    const streamKey = getStreamKey({mtype: MsgType.Resp, reqId});
+    if (this._pendingCalls.has(reqId) || this._pendingStreams.has(streamKey)) {
+      this._sendMessage({mtype: MsgType.Call, reqId, abort: true})
+      .catch(() => {});     // Ignore errors from such a send.
     }
   }
 
@@ -158,11 +171,19 @@ export class StreamingRpcImpl implements StreamingRpc {
     if (msg.error) {
       throw new Error(`Unexpected call with an error, reqId ${reqId}`);
     }
+    if (msg.abort) {
+      this._callControllers.get(reqId)?.abort();
+      return;
+    }
     const chunks = this._getChunksIfStreaming(msg);
+    const abortController = new AbortController();
+    this._callControllers.set(reqId, abortController);
     (async () => {
       try {
-        const respData = await this._options.callHandler({value: msg.data, chunks}) as StreamingDataChecked;
-        this.disconnectSignal.throwIfAborted();
+        const abortSignal = AbortSignal.any([abortController.signal, this.disconnectSignal]);
+        const respData = await this._options.callHandler(
+          {value: msg.data, chunks}, abortSignal) as StreamingDataChecked;
+        abortSignal.throwIfAborted();
         await this._sendStreamingData(MsgType.Resp, reqId, respData);
       } catch (err) {
         if (err instanceof SendError) {
@@ -170,6 +191,8 @@ export class StreamingRpcImpl implements StreamingRpc {
         }
         this._options.verbose?.("Responding with an error", err);
         await this._sendMessage({mtype: MsgType.Resp, reqId, error: this._options.channel.errorToMsg(err)});
+      } finally {
+        this._callControllers.delete(reqId);
       }
     })().catch((err: Error) => {
       this._options.logWarn('failed to send response', err);
@@ -301,4 +324,8 @@ class StreamingHelper implements AsyncIterableIterator<UniqueTypes["Chunk"]> {
 
 function getStreamKey(msg: IMessage) {
   return `${msg.mtype}:${msg.reqId}`;
+}
+
+function pick<T, K extends keyof T>(obj: T, ...keys: K[]): Pick<T, K> {
+  return Object.fromEntries(keys.map((key) => [key, obj[key]])) as Pick<T, K>;
 }

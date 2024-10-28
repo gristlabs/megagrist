@@ -82,7 +82,7 @@ export interface Channel {
 export interface StreamingRpcOptions {
   channel: Channel;
   logWarn: (message: string, err: Error) => void;
-  callHandler: (callData: StreamingData) => Promise<StreamingData>;
+  callHandler: (callData: StreamingData, abortSignal?: AbortSignal) => Promise<StreamingData>;
   signalHandler: (signalData: StreamingData) => void;
   // A function like console.log for verbose logging.
   verbose?: (...args: unknown[]) => void;
@@ -97,7 +97,7 @@ export interface StreamingRpc {
   disconnectSignal: AbortSignal;
 
   initialize(options: StreamingRpcOptions): void;
-  makeCall(callData: StreamingData): Promise<StreamingData>;
+  makeCall(callData: StreamingData, abortSignal?: AbortSignal): Promise<StreamingData>;
   sendSignal(signalData: StreamingData): Promise<void>;
   dispatch(msg: IMessage): boolean;
 }
@@ -110,6 +110,7 @@ export interface StreamingRpc {
 // Call streaming:  -> {Call, reqId, data, more: true}      => seen as value
 //                  -> {Call, reqId, data, more: true} * N  => seen as chunks
 //                  -> {Call, reqId}                        => seen as end of chunks
+// Aborting a call: -> {Call, reqId, abort: true}           => signal to abort response to a call
 // Responses and Signals follow the same pattern, but start with MsgType.Resp or MsgType.Signal,
 // respectively.
 //
@@ -120,6 +121,7 @@ export interface IMessage {
   mtype: MsgType;
   reqId: number;
   more?: boolean;     // Is more data expected (i.e. more streamed chunks)? Defaults to false.
+  abort?: boolean;    // If present in a Call message, the response should be ended with an "Aborted" error.
   data?: unknown;
   error?: unknown;    // If this message represents an error; then `more` and `data` are ignored.
 }

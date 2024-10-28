@@ -27,8 +27,14 @@ export class DataEngineClient implements IDataEngine {
     // results, for which the complete returned data is the result.
     // TODO This implementation doesn't check the validity of anything received.
     return async (...args: Parameters<IDataEngine[Method]>): Promise<Awaited<ReturnType<IDataEngine[Method]>>> => {
+      let abortSignal: AbortSignal|undefined;
+      const lastArg = args[args.length - 1];
+      if (lastArg instanceof AbortSignal) {
+        abortSignal = lastArg;
+        args.pop();
+      }
       const data = {value: [method, ...args]};
-      const result = await this._rpc.makeCall(data);
+      const result = await this._rpc.makeCall(data, abortSignal);
       return (streaming ? result : result.value) as Awaited<ReturnType<IDataEngine[Method]>>;
     };
   }

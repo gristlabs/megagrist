@@ -29,7 +29,9 @@ abstract class BaseDataEngine implements IDataEngine {
     })());
   }
 
-  public async fetchQueryStreaming(query: Query, options: QueryStreamingOptions): Promise<QueryResultStreaming> {
+  public async fetchQueryStreaming(
+    query: Query, options: QueryStreamingOptions, abortSignal?: AbortSignal
+  ): Promise<QueryResultStreaming> {
     const bindParams = new BindParams();
     const sql = sqlSelectFromQuery(query, bindParams);
     // console.warn("RUNNING SQL", sql, bindParams.getParams());
@@ -45,8 +47,7 @@ abstract class BaseDataEngine implements IDataEngine {
     // simplify this substantially!)
 
     const timeoutSignal = AbortSignal.timeout(options.timeoutMs);
-    const abortSignal = options.abortSignal ?
-      AbortSignal.any([options.abortSignal, timeoutSignal]) : timeoutSignal;
+    const fullAbortSignal = abortSignal ? AbortSignal.any([abortSignal, timeoutSignal]) : timeoutSignal;
 
     // let abortTimer: ReturnType<typeof setTimeout>|undefined;
     let iterator: IterableIterator<CellValue[]>|undefined;
@@ -54,7 +55,7 @@ abstract class BaseDataEngine implements IDataEngine {
     let cleanupCalled = false;
     const cleanup = () => {
       cleanupCalled = true;
-      abortSignal.removeEventListener('abort', cleanup);
+      fullAbortSignal.removeEventListener('abort', cleanup);
       iterator?.return?.();
       db.exec('ROLLBACK');
       this.releaseDB(db);
@@ -67,7 +68,7 @@ abstract class BaseDataEngine implements IDataEngine {
       this.releaseDB(db);
       throw e;
     }
-    abortSignal.addEventListener('abort', cleanup);
+    fullAbortSignal.addEventListener('abort', cleanup);
     try {
       // This may be needed to force a snapshot to be taken (not sure). More sensibly, this may be
       // a good time to get actionNum (to identify the current state of the DB).
@@ -83,13 +84,13 @@ abstract class BaseDataEngine implements IDataEngine {
             chunk.push(row);
             if (chunk.length === options.chunkRows) {
               yield chunk;
-              abortSignal.throwIfAborted();
+              fullAbortSignal.throwIfAborted();
               chunk = [];
             }
           }
           if (chunk.length > 0) {
             yield chunk;
-            abortSignal.throwIfAborted();
+            fullAbortSignal.throwIfAborted();
             chunk = [];
           }
         } finally {

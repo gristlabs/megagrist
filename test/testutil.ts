@@ -4,6 +4,7 @@ import * as chai from 'chai';
 import chaiAsPromised from 'chai-as-promised';
 
 chai.use(chaiAsPromised);
+chai.config.includeStack = true;    // Affects asserts like isRejected and isFulfilled.
 
 // Having a file that imports mocha allows using describe() and it() globals in tests. It is an
 // alternative to including `"types": ["mocha"]` into tsconfig.json.

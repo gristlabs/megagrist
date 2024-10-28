@@ -219,3 +219,9 @@ export class DataEnginePooled extends BaseDataEngine {
     return conn;
   }
 }
+
+// TODO Hack to silence typescript error with older typescript version.
+declare var AbortSignal: typeof globalThis.AbortSignal & {
+  timeout(milliseconds: number): AbortSignal;
+  any(signals: AbortSignal[]): AbortSignal;
+}

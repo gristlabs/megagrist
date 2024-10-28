@@ -329,3 +329,9 @@ function getStreamKey(msg: IMessage) {
 function pick<T, K extends keyof T>(obj: T, ...keys: K[]): Pick<T, K> {
   return Object.fromEntries(keys.map((key) => [key, obj[key]])) as Pick<T, K>;
 }
+
+// TODO Hack to silence typescript error with older typescript version.
+declare var AbortSignal: typeof globalThis.AbortSignal & {
+  timeout(milliseconds: number): AbortSignal;
+  any(signals: AbortSignal[]): AbortSignal;
+}

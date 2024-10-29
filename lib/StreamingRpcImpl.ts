@@ -133,6 +133,7 @@ export class StreamingRpcImpl implements StreamingRpc {
       // the only part where we control how fast we are consuming it.
       try {
         for await (const chunk of data.chunks) {
+          // TODO does this loop exit if request is aborted???
           this.disconnectSignal.throwIfAborted();
           await this._options.channel.waitToDrain();
           await this._sendMessage({mtype, reqId, data: chunk, more: true});
@@ -280,15 +281,19 @@ class StreamingHelper implements AsyncIterableIterator<UniqueTypes["Chunk"]> {
   }
 
   public _finishChunks(): void {
-    if (this._finished) { return; }
-    this._pushItem({value: undefined, done: true});
-    this._cleanup();
+    if (!this._finished) {
+      this._pushItem({value: undefined, done: true});
+      this._cleanup();
+    }
+    this._cleanupCallback();
   }
 
   public _supplyError(errObj: Error): void {
-    if (this._finished) { return; }
-    const endValue = Promise.reject(errObj);
-    this._cleanup(endValue);
+    if (!this._finished) {
+      const endValue = Promise.reject(errObj);
+      this._cleanup(endValue);
+    }
+    this._cleanupCallback();
   }
 
   private _cleanup(endValue?: Promise<ChunkIterResult>) {
@@ -299,7 +304,8 @@ class StreamingHelper implements AsyncIterableIterator<UniqueTypes["Chunk"]> {
     }
     this._queuedCallbacks = [];
     // We do NOT clear _queuedChunks, next() calls should continue picking them up until the end.
-    this._cleanupCallback();
+    // We also don't call _cleanupCallback() here; it is only called once incoming messages
+    // indicate the end of the stream, at which point we know to expect no more messages for it.
   }
 
   private _useEndValue(): Promise<ChunkIterResult> {
@@ -327,7 +333,13 @@ function getStreamKey(msg: IMessage) {
 }
 
 function pick<T, K extends keyof T>(obj: T, ...keys: K[]): Pick<T, K> {
-  return Object.fromEntries(keys.map((key) => [key, obj[key]])) as Pick<T, K>;
+  const result = {} as Pick<T, K>;
+  for (const key of keys) {
+    if (key in obj) {
+      result[key] = obj[key];
+    }
+  }
+  return result;
 }
 
 // TODO Hack to silence typescript error with older typescript version.

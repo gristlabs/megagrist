@@ -48,7 +48,7 @@ export function sqlSelectConditionsFromQuery(namePrefix: string, query: Query, p
   const cursorExpr = query.cursor ? sqlExprFromCursor(namePrefix, query.sort, query.cursor, params) : null;
   const rowsExpr = query.rowIds ? sqlExprFromRowIds(query.rowIds) : null;
   const whereExpr = [filterExpr, cursorExpr, rowsExpr].filter(Boolean).map(expr => `(${expr})`).join(' AND ') || '1';
-  const orderBy = `ORDER BY ${sqlOrderByFromSort(namePrefix, query.sort)}`
+  const orderBy = `ORDER BY ${sqlOrderByFromSort(namePrefix, query.sort)}`;
   const limit = typeof query.limit === 'number' ? `LIMIT ${query.limit}` : '';
   return `WHERE ${whereExpr} ${orderBy} ${limit}`;
 }
@@ -107,7 +107,7 @@ function sqlOrderByFromSort(namePrefix: string, sort: OrderByClause|undefined): 
       const isDesc = colSpec.startsWith('-');
       const colId = isDesc ? colSpec.slice(1) : colSpec;
       const fullColId = namePrefix + quoteIdent(colId);
-      parts.push(`${fullColId} ${isDesc ? 'DESC' : 'ASC'}`);
+      parts.push(`${fullColId} ${isDesc ? 'DESC NULLS FIRST' : 'ASC NULLS LAST'}`);
     }
   }
   parts.push('id');

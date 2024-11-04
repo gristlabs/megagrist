@@ -8,12 +8,14 @@
     "test": "./buildtools/build && mocha dist/dev/test/**/*.js ${DEBUG:+'-b'} -g \"${GREP_TESTS}\" -n expose-gc"
   },
   "keywords": [],
+  "private": true,
   "author": {
     "name": "Grist Labs Inc.",
     "email": "info@getgrist.com"
   },
   "dependencies": {
     "better-sqlite3": "^11.3.0",
+    "core": "file:./core",
     "ws": "^8.18.0"
   },
   "devDependencies": {

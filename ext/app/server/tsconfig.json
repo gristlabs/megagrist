@@ -1,0 +1,16 @@
+{
+  "extends": "../../../buildtools/tsconfig-base-ext.json",
+  "include": [
+    "**/*",
+    "../gen-server/**/*",
+    "../../../app/server/**/*",
+    "../../../app/gen-server/**/*",
+    "../../../core/app/server/**/*",
+    "../../../core/app/gen-server/**/*",
+    "../../../stubs/app/server/**/*"
+  ],
+  "references": [
+    { "path": "../common" },
+    { "path": "../megagrist" },
+  ]
+}

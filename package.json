@@ -1,0 +1,30 @@
+{
+  "name": "megagrist",
+  "version": "0.1.0",
+  "description": "Grist with a shiny and awesome data engine",
+  "scripts": {
+    "setup": "yarn install && cd core && rm -f ext && ln -s ../ext ext && yarn run install:python",
+    "build": "cd core && yarn run build:prod",
+    "build-docker": "docker buildx build --load -t gristlabs/megagrist --build-context=ext=ext core",
+    "start": "cd core && sandbox/watch.sh",
+    "test": "cd core && mocha '_build/ext/test/**/*.js' ${DEBUG:+-b --no-exit} -g \"${GREP_TESTS}\" -n expose-gc"
+  },
+  "keywords": [],
+  "private": true,
+  "author": {
+    "name": "Grist Labs Inc.",
+    "email": "info@getgrist.com"
+  },
+  "workspaces": {
+    "packages": ["core", "ext"],
+    "nohoist": [
+      "**/eslint/**",
+      "**/typescript-eslint/**",
+      "**/globals/**",
+      "**/@eslint/js/**"
+    ]
+  },
+  "devDependencies": {
+    "typescript": "4.7.4"
+  }
+}

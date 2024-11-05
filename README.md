@@ -16,3 +16,16 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
+
+---
+
+## How to build from source
+
+You'll need an environment with `bash`, `git`, and `yarn`.
+
+```
+git submodule init
+git submodule update
+yarn run setup
+yarn run build
+```

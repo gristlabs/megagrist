@@ -54,6 +54,7 @@ jobs:
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
           BRANCH_NAME: ${{ steps.extract_artifacts.outputs.PR_SOURCE }}
+          FLY_ENV__GRIST_DATA_ENGINE_ENABLE_MEGA: '1'
         working-directory: ./core
         run: |
           node buildtools/fly-deploy.js deploy

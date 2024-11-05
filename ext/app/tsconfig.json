@@ -7,5 +7,6 @@
     { "path": "./server" },
     { "path": "./common" },
     { "path": "./plugin" },
+    { "path": "../test" },
   ]
 }

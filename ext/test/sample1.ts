@@ -1,5 +1,5 @@
-import {DocAction} from '../lib/DocActions';
-import {IDataEngine} from '../lib/IDataEngine';
+import {DocAction} from 'ext/app/megagrist/lib/DocActions';
+import {IDataEngine} from 'ext/app/megagrist/lib/IDataEngine';
 
 export function createTable(dataEngine: IDataEngine, tableId: string) {
   // Run actions to create a table.

@@ -1,8 +1,8 @@
 import * as ws from 'ws';
-import {DataEngineClient} from '../lib/DataEngineClient';
-import {StreamingData} from '../lib/StreamingRpc';
-import {createStreamingRpc} from '../lib/StreamingRpcImpl';
-import {WebSocketChannel} from '../lib/WebSocketChannel';
+import {DataEngineClient} from 'ext/app/megagrist/lib/DataEngineClient';
+import {StreamingData} from 'ext/app/megagrist/lib/StreamingRpc';
+import {createStreamingRpc} from 'ext/app/megagrist/lib/StreamingRpcImpl';
+import {WebSocketChannel} from 'ext/app/megagrist/lib/WebSocketChannel';
 import {IpcChannel} from './ipcChannel';
 
 const verbose = process.env.VERBOSE ? console.log : undefined;

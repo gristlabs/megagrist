@@ -1,8 +1,8 @@
 // TODO Test a few rpc interactions, including basic streaming, leave TODOs for more tests (errors, etc.)
 
-import {StreamingData, StreamingRpc} from '../lib/StreamingRpc';
-import {createStreamingRpc} from '../lib/StreamingRpcImpl';
-import {WebSocketChannel} from '../lib/WebSocketChannel';
+import {StreamingData, StreamingRpc} from 'ext/app/megagrist/lib/StreamingRpc';
+import {createStreamingRpc} from 'ext/app/megagrist/lib/StreamingRpcImpl';
+import {WebSocketChannel} from 'ext/app/megagrist/lib/WebSocketChannel';
 import {assert} from 'chai';
 import {AddressInfo} from 'net';
 import * as ws from 'ws';
@@ -14,7 +14,7 @@ describe('StreamingRpc', function() {
 
   function addressToUrl(address: string|AddressInfo|null): string {
     if (!address || typeof address !== 'object') { throw new Error(`Invalid address ${address}`); }
-    return `http://localhost:${address.port}/`;
+    return `ws://localhost:${address.port}/`;
   }
 
   async function createClient(url: string): Promise<[ws.WebSocket, StreamingRpc]> {

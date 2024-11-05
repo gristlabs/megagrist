@@ -1,4 +1,4 @@
-import {DataEngine} from '../lib/DataEngine';
+import {DataEngine} from 'ext/app/megagrist/lib/DataEngine';
 import * as sample1 from './sample1';
 import {createTestDir, withTiming} from './testutil';
 import {assert} from 'chai';

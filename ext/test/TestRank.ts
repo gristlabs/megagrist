@@ -1,7 +1,13 @@
-import {DocAction} from '../lib/DocActions';
-import {IDataEngine} from '../lib/IDataEngine';
-import {DataEngine} from '../lib/DataEngine';
-import {QueryFilters} from '../lib/types';
+/**
+ * TODO
+ * This is an unfinished experiment with seeing how fast we can get random ranges of rows in a
+ * sorted order.
+ */
+
+import {DocAction} from 'ext/app/megagrist/lib/DocActions';
+import {IDataEngine} from 'ext/app/megagrist/lib/IDataEngine';
+import {DataEngine} from 'ext/app/megagrist/lib/DataEngine';
+import {QueryFilters} from 'ext/app/megagrist/lib/types';
 import {createTestDir, withTiming} from './testutil';
 import SqliteDatabase from 'better-sqlite3';
 import {assert} from 'chai';

@@ -1,6 +1,6 @@
-import {DataEngine} from '../lib/DataEngine';
-import {Deps as StoreDocActionDeps} from '../lib/StoreDocAction';
-import {QueryCursor, QueryFilters, QueryResult} from '../lib/types';
+import {DataEngine} from 'ext/app/megagrist/lib/DataEngine';
+import {Deps as StoreDocActionDeps} from 'ext/app/megagrist/lib/StoreDocAction';
+import {QueryCursor, QueryFilters, QueryResult} from 'ext/app/megagrist/lib/types';
 import * as sample1 from './sample1';
 import {changePropertyForTest, createTestDir, withTiming} from './testutil';
 import {assert} from 'chai';

@@ -57,6 +57,7 @@ jobs:
           FLY_ENV__GRIST_DATA_ENGINE_ENABLE_MEGA: '1'
         working-directory: ./core
         run: |
+          cat ./fly.toml    # TODO for testing
           node buildtools/fly-deploy.js deploy
           flyctl config -c ./fly.toml env | awk '/APP_HOME_URL/{print "DEPLOY_URL=" $2}' >> $GITHUB_OUTPUT
           flyctl config -c ./fly.toml env | awk '/FLY_DEPLOY_EXPIRATION/{print "EXPIRES=" $2}' >> $GITHUB_OUTPUT

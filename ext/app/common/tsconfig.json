@@ -1,0 +1,13 @@
+{
+  "extends": "../../../buildtools/tsconfig-base-ext.json",
+  "include": [
+    "**/*",
+    "../../../app/common/**/*",
+    "../../../core/app/common/**/*",
+    "../../../stubs/app/common/version.ts",
+    "../../../package.json"
+  ],
+  "references": [
+    { "path": "../plugin" }
+  ]
+}

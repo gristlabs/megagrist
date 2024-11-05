@@ -1,0 +1,19 @@
+{
+  "extends": "../../../buildtools/tsconfig-base-ext.json",
+  "include": [
+    "**/*",
+    "../gen-server/**/*",
+    "../../../app/server/**/*",
+    "../../../app/gen-server/**/*",
+    "../../../core/app/server/**/*",
+    "../../../core/app/gen-server/**/*",
+    "../../../stubs/app/server/declarations.d.ts",
+    "../../../stubs/app/server/prometheus-exporter.ts",
+    "../../../stubs/app/server/server.ts",
+    "../../../stubs/app/server/lib/globalConfig.ts"
+  ],
+  "references": [
+    { "path": "../common" },
+    { "path": "../megagrist" },
+  ]
+}

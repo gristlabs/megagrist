@@ -1,0 +1,12 @@
+{
+  "extends": "../../buildtools/tsconfig-base-ext.json",
+  "files": [],
+  "include": [],
+  "references": [
+    { "path": "./client" },
+    { "path": "./server" },
+    { "path": "./common" },
+    { "path": "./plugin" },
+    { "path": "../test" },
+  ]
+}

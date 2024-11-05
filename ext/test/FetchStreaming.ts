@@ -1,8 +1,8 @@
-import {DataEngine} from '../lib/DataEngine';
-import {DataEngineClient} from '../lib/DataEngineClient';
-import {createDataEngineServer} from '../lib/DataEngineServer';
-import {IDataEngine, QueryStreamingOptions} from '../lib/IDataEngine';
-import {WebSocketChannel} from '../lib/WebSocketChannel';
+import {DataEngine} from 'ext/app/megagrist/lib/DataEngine';
+import {DataEngineClient} from 'ext/app/megagrist/lib/DataEngineClient';
+import {createDataEngineServer} from 'ext/app/megagrist/lib/DataEngineServer';
+import {IDataEngine, QueryStreamingOptions} from 'ext/app/megagrist/lib/IDataEngine';
+import {WebSocketChannel} from 'ext/app/megagrist/lib/WebSocketChannel';
 import * as sample1 from './sample1';
 import {createTestDir} from './testutil';
 import {assert} from 'chai';
@@ -50,7 +50,7 @@ describe('FetchStreaming', function() {
   describe('over rpc', function() {
     function addressToUrl(address: string|AddressInfo|null): string {
       if (!address || typeof address !== 'object') { throw new Error(`Invalid address ${address}`); }
-      return `http://localhost:${address.port}/`;
+      return `ws://localhost:${address.port}/`;
     }
     async function getDataEngineClient(url: string): Promise<[ws.WebSocket, DataEngineClient]> {
       const websocket = new ws.WebSocket(url);

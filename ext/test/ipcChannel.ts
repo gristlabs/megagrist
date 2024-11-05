@@ -2,7 +2,7 @@
  * This is a helper for tests that start a child process to call between the main test process and
  * the child process. It is used by Test3 and _test3Child.
  */
-import {Channel, IMessage} from '../lib/StreamingRpc';
+import {Channel, IMessage} from 'ext/app/megagrist/lib/StreamingRpc';
 import type {ChildProcess} from 'child_process';
 
 export class IpcChannel implements Channel {

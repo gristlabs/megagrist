@@ -4,10 +4,10 @@
 //   All in one process is fine.
 // - Keep track of memory used.
 
-import {DataEngine} from '../lib/DataEngine';
-import {createDataEngineServer} from '../lib/DataEngineServer';
-import {createStreamingRpc} from '../lib/StreamingRpcImpl';
-import {WebSocketChannel} from '../lib/WebSocketChannel';
+import {DataEngine} from 'ext/app/megagrist/lib/DataEngine';
+import {createDataEngineServer} from 'ext/app/megagrist/lib/DataEngineServer';
+import {createStreamingRpc} from 'ext/app/megagrist/lib/StreamingRpcImpl';
+import {WebSocketChannel} from 'ext/app/megagrist/lib/WebSocketChannel';
 import * as sample1 from './sample1';
 import {createTestDir, withTiming} from './testutil';
 import {IpcChannel} from './ipcChannel';
@@ -79,7 +79,7 @@ describe('Test3', function() {
     describe(`with ${readDBName} ${index}`, function() {
       function addressToUrl(address: string|AddressInfo|null): string {
         if (!address || typeof address !== 'object') { throw new Error(`Invalid address ${address}`); }
-        return `http://localhost:${address.port}/`;
+        return `ws://localhost:${address.port}/`;
       }
 
       async function createServer(dbPath: string): Promise<ws.Server> {

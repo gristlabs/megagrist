@@ -20,7 +20,8 @@ jobs:
       contains(github.event.pull_request.labels.*.name, 'preview'))
     steps:
       - uses: actions/checkout@v4
-        submodules: true
+        with:
+          submodules: true
       - name: Build and export Docker image
         id: docker-build
         run: >

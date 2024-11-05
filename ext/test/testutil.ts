@@ -1,4 +1,5 @@
 import fs from 'fs/promises';
+import {tmpdir} from 'os';
 import path from 'path';
 import * as chai from 'chai';
 import chaiAsPromised from 'chai-as-promised';
@@ -14,11 +15,11 @@ import 'mocha';
 import 'source-map-support/register';
 
 /**
- * Create test directory named suiteName under process.env.TESTDIR, defaulting to ./_testoutputs.
+ * Create test directory named suiteName under process.env.TESTDIR, defaulting to tmpdir().
  * Hard-deletes any directory already there.
  */
 export async function createTestDir(suiteName: string): Promise<string> {
-  const tmpRootDir = process.env.TESTDIR || "./_testoutputs";
+  const tmpRootDir = process.env.TESTDIR || tmpdir();
   const testDir = path.join(tmpRootDir, suiteName);
   // Remove any previous tmp dir, and create the new one.
   await fs.rm(testDir, {force: true, recursive: true});

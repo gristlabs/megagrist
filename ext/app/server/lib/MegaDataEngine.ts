@@ -15,7 +15,7 @@ import * as ICreate from 'app/server/lib/ICreate';
 
 const enableMegaDataEngine = appSettings.section('dataEngine').flag('enableMega').readBool({
   envVar: 'GRIST_DATA_ENGINE_ENABLE_MEGA',
-  defaultValue: false,
+  defaultValue: true,
 });
 
 export function getSupportedEngineChoices(): EngineCode[]|undefined {

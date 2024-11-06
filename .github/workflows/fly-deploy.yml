@@ -18,6 +18,8 @@ jobs:
       github.event.workflow_run.conclusion == 'success'
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true
       - name: Set up flyctl
         uses: superfly/flyctl-actions/setup-flyctl@master
         with:

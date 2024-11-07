@@ -18,6 +18,10 @@
   "workspaces": {
     "packages": ["core", "ext"],
     "nohoist": [
+      "**/jquery",
+      "**/bootstrap",
+      "**/bootstrap-datepicker",
+      "**/components-jqueryui",
       "**/eslint/**",
       "**/typescript-eslint/**",
       "**/globals/**",

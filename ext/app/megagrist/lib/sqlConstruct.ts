@@ -3,6 +3,16 @@ import {OrderByClause, ParsedPredicateFormula} from './types';
 import {CellValue} from './DocActions';
 import {quoteIdent} from './sqlUtil';
 
+// See ExpandedQuery in core/app/server/lib/ExpandedQuery.ts
+export interface ExpandedQuery extends Query {
+  // A list of join clauses to bring in data from other tables.
+  joins?: string[];
+
+  // A list of selections for regular data and data computed via formulas.
+  // If query.selects is present, then query.columns is ignored.
+  selects?: string[];
+}
+
 /**
  * When constructing a query, and values to include in the query are included as placeholders,
  * with the actual values collected in this BindParams object. They should be retrieved using
@@ -32,10 +42,15 @@ export class BindParams {
 /**
  * Construct SQL from the given query.
  */
-export function sqlSelectFromQuery(query: Query, params: BindParams): string {
-  const conditions = sqlSelectConditionsFromQuery('', query, params);
-  const columns = query.columns ? query.columns.map(c => quoteIdent(c)).join(", ") : '*';
-  return `SELECT ${columns} FROM ${quoteIdent(query.tableId)} ${conditions}`;
+export function sqlSelectFromQuery(query: ExpandedQuery, params: BindParams): string {
+  const namePrefix = `${quoteIdent(query.tableId)}.`;
+  const conditions = sqlSelectConditionsFromQuery(namePrefix, query, params);
+  const joinClauses = query.joins ? query.joins.join(' ') : '';
+  const selects = (
+    query.selects ? query.selects.join(', ') :
+    query.columns ? query.columns.map(c => quoteIdent(c)).join(", ") :
+    '*');
+  return `SELECT ${selects} FROM ${quoteIdent(query.tableId)} ${joinClauses} ${conditions}`;
 }
 
 /**
@@ -43,21 +58,21 @@ export function sqlSelectFromQuery(query: Query, params: BindParams): string {
  * and LIMIT. It also prefixes each mention of the column with namePrefix (like `quotedTableName.`
  * or '' to omit the prefix). This helps for using the SQL in JOINs.
  */
-export function sqlSelectConditionsFromQuery(namePrefix: string, query: Query, params: BindParams): string {
+export function sqlSelectConditionsFromQuery(namePrefix: string, query: ExpandedQuery, params: BindParams): string {
   const filterExpr = query.filters ? sqlExprFromFilters(namePrefix, query.filters, params) : null;
   const cursorExpr = query.cursor ? sqlExprFromCursor(namePrefix, query.sort, query.cursor, params) : null;
-  const rowsExpr = query.rowIds ? sqlExprFromRowIds(query.rowIds) : null;
+  const rowsExpr = query.rowIds ? sqlExprFromRowIds(namePrefix, query.rowIds) : null;
   const whereExpr = [filterExpr, cursorExpr, rowsExpr].filter(Boolean).map(expr => `(${expr})`).join(' AND ') || '1';
   const orderBy = `ORDER BY ${sqlOrderByFromSort(namePrefix, query.sort)}`;
   const limit = typeof query.limit === 'number' ? `LIMIT ${query.limit}` : '';
   return `WHERE ${whereExpr} ${orderBy} ${limit}`;
 }
 
-function sqlExprFromRowIds(rowIds: number[]) {
+function sqlExprFromRowIds(namePrefix: string, rowIds: number[]) {
   if (!rowIds.every(Number.isInteger)) {
     throw new Error("Expected all rowIds to be integers");
   }
-  return `id in (${rowIds})`;
+  return `${namePrefix}id in (${rowIds})`;
 }
 
 function sqlExprFromFilters(namePrefix: string, filters: ParsedPredicateFormula, params: BindParams): string {
@@ -110,7 +125,7 @@ function sqlOrderByFromSort(namePrefix: string, sort: OrderByClause|undefined): 
       parts.push(`${fullColId} ${isDesc ? 'DESC NULLS FIRST' : 'ASC NULLS LAST'}`);
     }
   }
-  parts.push('id');
+  parts.push(namePrefix + 'id');
   return parts.join(', ');
 }
 

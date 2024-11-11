@@ -1,7 +1,7 @@
 import {ActionSet, ApplyResultSet, Query, QueryResult, QueryResultStreaming, QuerySubId} from './types';
 import {CellValue} from './DocActions';
 import {IDataEngine, QueryStreamingOptions, QuerySubCallback} from './IDataEngine';
-import {BindParams, sqlSelectFromQuery} from './sqlConstruct';
+import {BindParams, ExpandedQuery, sqlSelectFromQuery} from './sqlConstruct';
 import {StoreDocAction} from './StoreDocAction';
 import SqliteDatabase from 'better-sqlite3';
 
@@ -9,10 +9,10 @@ abstract class BaseDataEngine implements IDataEngine {
   private _querySubs = new Map<number, Query>();
   private _nextQuerySub = 1;
 
-  public async fetchQuery(query: Query): Promise<QueryResult> {
+  public async fetchQuery(query: ExpandedQuery): Promise<QueryResult> {
     const bindParams = new BindParams();
     const sql = sqlSelectFromQuery(query, bindParams);
-    // console.warn("RUNNING SQL", sql, bindParams.getParams());
+    // console.warn("fetchQuery", sql, bindParams.getParams());
     return this.withDB((db) => db.transaction(() => {
       const stmt = db.prepare(sql);
       const rows = stmt.raw().all(bindParams.getParams()) as CellValue[][];
@@ -30,11 +30,11 @@ abstract class BaseDataEngine implements IDataEngine {
   }
 
   public async fetchQueryStreaming(
-    query: Query, options: QueryStreamingOptions, abortSignal?: AbortSignal
+    query: ExpandedQuery, options: QueryStreamingOptions, abortSignal?: AbortSignal
   ): Promise<QueryResultStreaming> {
     const bindParams = new BindParams();
     const sql = sqlSelectFromQuery(query, bindParams);
-    // console.warn("RUNNING SQL", sql, bindParams.getParams());
+    // console.warn("fetchQueryStreaming", sql, bindParams.getParams());
 
     // Note the convoluted flow here: we are returning an object, which includes a generator.
     // Caller is expected to iterate through the generator. This iteration happens inside a DB

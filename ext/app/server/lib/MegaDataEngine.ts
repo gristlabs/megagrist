@@ -1,4 +1,5 @@
 import {CellValue} from 'app/common/DocActions';
+import {DocData} from 'app/common/DocData';
 import {EngineCode} from 'app/common/DocumentSettings';
 import {isListType} from 'app/common/gristTypes';
 import * as marshal from 'app/common/marshal';
@@ -9,7 +10,9 @@ import {DataEnginePooled} from 'app/megagrist/lib/DataEngine';
 import {createDataEngineServer} from 'app/megagrist/lib/DataEngineServer';
 import {QueryStreamingOptions} from 'app/megagrist/lib/IDataEngine';
 import {Query, QueryResultStreaming} from 'app/megagrist/lib/types';
+import {ExpandedQuery} from 'app/megagrist/lib/sqlConstruct';
 import {appSettings} from 'app/server/lib/AppSettings';
+import {expandQuery} from 'app/server/lib/ExpandedQuery';
 import * as ICreate from 'app/server/lib/ICreate';
 
 
@@ -27,15 +30,16 @@ export function getSupportedEngineChoices(): EngineCode[]|undefined {
 }
 
 export class MegaDataEngine {
-  public static maybeCreate(dbPath: string, engine?: string): MegaDataEngine|null {
+  public static maybeCreate(dbPath: string, docData: DocData): MegaDataEngine|null {
+    const engine = docData.docSettings().engine;
     const isEnabled = enableMegaDataEngine && engine === MEGA_ENGINE;
-    return isEnabled ? new MegaDataEngine(dbPath) : null;
+    return isEnabled ? new MegaDataEngine(dbPath, docData) : null;
   }
 
   private _dataEngine: DataEnginePooled;
 
-  constructor(dbPath: string) {
-    this._dataEngine = new UnmarshallingDataEngine(dbPath, {verbose: console.log});
+  constructor(dbPath: string, docData: DocData) {
+    this._dataEngine = new UnmarshallingDataEngine(docData, dbPath, {verbose: console.log});
     // db.exec("PRAGMA journal_mode=WAL");  <-- TODO we want this, but leaving for later.
   }
 
@@ -46,24 +50,23 @@ export class MegaDataEngine {
 }
 
 class UnmarshallingDataEngine extends DataEnginePooled {
+  constructor(private _docData: DocData, ...args: ConstructorParameters<typeof DataEnginePooled>) {
+    super(...args);
+  }
+
   public async fetchQueryStreaming(
     query: Query, options: QueryStreamingOptions, abortSignal?: AbortSignal
   ): Promise<QueryResultStreaming> {
 
-    // Get the grist types of columns, which determine how to decode values.
-    // TODO This is poor. If we do two queries, they need to be in a transaction, to ensure no
-    // changes to DB can happen in between. And also column types is something Grist already knows
-    // how to maintain in memory; seems silly to query (but fine, save for the transaction point).
-    let columnTypes: Map<string, string>;
-    this.withDB((db) => db.transaction(() => {
-      const stmt = db.prepare('SELECT colId, type'
-        + ' FROM _grist_Tables_column c LEFT JOIN _grist_Tables t ON c.parentID = t.id'
-        + ' WHERE t.tableId=?');
-      columnTypes = new Map(stmt.raw().all(query.tableId) as Array<[string, string]>);
-    })());
+    // We use the metadata about the table to get the grist types of columns, which determine how
+    // to decode values.
+    const tableData = this._docData.getTable(query.tableId)
 
-    const queryResult = await super.fetchQueryStreaming(query, options, abortSignal);
-    const decoders = queryResult.value.colIds.map(c => getDecoder(columnTypes.get(c)));
+    const expanded = expandQuery({tableId: query.tableId, filters: {}}, this._docData, true);
+    const expandedQuery: ExpandedQuery = {...query, joins: expanded.joins, selects: expanded.selects};
+
+    const queryResult = await super.fetchQueryStreaming(expandedQuery, options, abortSignal);
+    const decoders = queryResult.value.colIds.map(c => getDecoder(tableData?.getColType(c)));
 
     async function *generateRows() {
       for await (const chunk of queryResult.chunks) {

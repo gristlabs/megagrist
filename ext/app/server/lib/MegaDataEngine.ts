@@ -1,4 +1,5 @@
-import {CellValue} from 'app/common/DocActions';
+import {ProcessedActionBundle} from 'app/common/AlternateActions';
+import {CellValue, DocAction, UserAction} from 'app/common/DocActions';
 import {DocData} from 'app/common/DocData';
 import {EngineCode} from 'app/common/DocumentSettings';
 import {isListType} from 'app/common/gristTypes';
@@ -41,6 +42,12 @@ export class MegaDataEngine {
   constructor(dbPath: string, docData: DocData) {
     this._dataEngine = new UnmarshallingDataEngine(docData, dbPath, {verbose: console.log});
     // db.exec("PRAGMA journal_mode=WAL");  <-- TODO we want this, but leaving for later.
+  }
+
+  public async applyUserActions(userActions: UserAction[]): Promise<ProcessedActionBundle> {
+    const actions = userActions as DocAction[];
+    const {results} = await this._dataEngine.applyActions({actions});
+    return {stored: actions, undo: [], retValues: results};
   }
 
   public serve(socket: MinimalWebSocket): void {

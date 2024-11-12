@@ -62,8 +62,13 @@ class UnmarshallingDataEngine extends DataEnginePooled {
     // to decode values.
     const tableData = this._docData.getTable(query.tableId)
 
-    const expanded = expandQuery({tableId: query.tableId, filters: {}}, this._docData, true);
-    const expandedQuery: ExpandedQuery = {...query, joins: expanded.joins, selects: expanded.selects};
+    let expandedQuery: ExpandedQuery;
+    if (query.columns) {
+      expandedQuery = query;
+    } else {
+      const expanded = expandQuery({tableId: query.tableId, filters: {}}, this._docData, true);
+      expandedQuery = {...query, joins: expanded.joins, selects: expanded.selects};
+    }
 
     const queryResult = await super.fetchQueryStreaming(expandedQuery, options, abortSignal);
     const decoders = queryResult.value.colIds.map(c => getDecoder(tableData?.getColType(c)));

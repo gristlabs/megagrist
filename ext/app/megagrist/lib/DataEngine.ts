@@ -19,7 +19,7 @@ abstract class BaseDataEngine implements IDataEngine {
       // console.warn("RESULT", rows);
       const queryResult: QueryResult = {
         tableId: query.tableId,
-        tableData: {},
+        tableData: {id: []},
         actionNum: 0,       // TODO
       };
       for (const [index, col] of stmt.columns().entries()) {

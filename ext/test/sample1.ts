@@ -5,10 +5,10 @@ export function createTable(dataEngine: IDataEngine, tableId: string) {
   // Run actions to create a table.
   return dataEngine.applyActions({actions: [
     ['AddTable', 'Table1', [
-      {id: 'Name', type: 'Text'},
-      {id: 'Email', type: 'Text'},
-      {id: 'MyDate', type: 'Date'},
-      {id: 'Age', type: 'Numeric'},
+      {id: 'Name', type: 'Text',   isFormula: false, formula: ''},
+      {id: 'Email', type: 'Text',  isFormula: false, formula: ''},
+      {id: 'MyDate', type: 'Date', isFormula: false, formula: ''},
+      {id: 'Age', type: 'Numeric', isFormula: false, formula: ''},
     ]]
   ]});
 }

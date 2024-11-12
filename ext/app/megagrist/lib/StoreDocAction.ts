@@ -1,4 +1,4 @@
-import {BulkColValues, DocAction} from './DocActions';
+import {BulkColValues, DocAction, isDataDocActionName} from './DocActions';
 import {getSqlTypeInfo, quoteIdent} from './sqlUtil';
 import SqliteDatabase from 'better-sqlite3';
 
@@ -16,6 +16,9 @@ export class StoreDocAction {
   constructor(private _db: SqliteDatabase.Database) {}
 
   public store(action: DocAction) {
+    if (!isDataDocActionName(action[0])) {
+      throw new Error(`Unsupported action type: ${action[0]}`);
+    }
     return this[action[0]](action as any);
   }
 

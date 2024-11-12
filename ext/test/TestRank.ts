@@ -23,9 +23,9 @@ namespace sample2 {
     // Run actions to create a table.
     return dataEngine.applyActions({actions: [
       ['AddTable', 'Table1', [
-        {id: 'SomeName', type: 'Text'},
-        {id: 'Email', type: 'Text'},
-        {id: 'RandomTime', type: 'DateTime'},
+        {id: 'SomeName', type: 'Text',       isFormula: false, formula: ''},
+        {id: 'Email', type: 'Text',          isFormula: false, formula: ''},
+        {id: 'RandomTime', type: 'DateTime', isFormula: false, formula: ''},
       ]]
     ]});
   }

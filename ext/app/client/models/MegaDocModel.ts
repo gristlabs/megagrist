@@ -323,7 +323,7 @@ function getLinkingColFilterAsPredicate(
 ): ParsedPredicateFormula|null {
   if (operation === "in") {
     if (values.length > 0) {
-      return ['In', ['Name', colId], ['List', ...values.map(v => ['Const', v])]];
+      return ['In', ['Name', colId], ['List', ...values.map<ParsedPredicateFormula>(v => ['Const', v])]];
     } else {
       return ['Const', 0];
     }

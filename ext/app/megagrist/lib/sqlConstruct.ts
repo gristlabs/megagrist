@@ -105,7 +105,7 @@ function sqlExprFromFilters(namePrefix: string, filters: ParsedPredicateFormula,
       case 'In':    return combine(args, 2, ([a, b]) => `${a} IN ${b}`);
       case 'NotIn': return combine(args, 2, ([a, b]) => `${a} NOT IN ${b}`);
       case 'List':  return combine(args, null, parts => parts.join(', '));
-      case 'Const': return params.addParam(node[1]);
+      case 'Const': return params.addParam(node[1] as CellValue);
       case 'Name':  return namePrefix + quoteIdent(node[1] as string);
       case 'Attr':  throw new Error('Attr not supported in filters');
       case 'Comment': return compileNode(args[0]);

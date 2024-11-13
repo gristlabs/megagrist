@@ -1,7 +1,7 @@
 import {DataEngine} from 'ext/app/megagrist/lib/DataEngine';
-import {DataEngineClient} from 'ext/app/megagrist/lib/DataEngineClient';
+import {DataEngineClient, IDataEngineCli} from 'ext/app/megagrist/lib/DataEngineClient';
 import {createDataEngineServer} from 'ext/app/megagrist/lib/DataEngineServer';
-import {IDataEngine, QueryStreamingOptions} from 'ext/app/megagrist/lib/IDataEngine';
+import {QueryStreamingOptions} from 'ext/app/megagrist/lib/IDataEngine';
 import {WebSocketChannel} from 'ext/app/megagrist/lib/WebSocketChannel';
 import * as sample1 from './sample1';
 import {createTestDir} from './testutil';
@@ -99,16 +99,16 @@ describe('FetchStreaming', function() {
     });
   });
 
-  async function testOverlappingShouldFail(dataEngine: IDataEngine) {
+  async function testOverlappingShouldFail(dataEngine: IDataEngineCli) {
     const options: QueryStreamingOptions = {
       timeoutMs: 60_000,
       chunkRows: 500,
     };
-    const result1 = await dataEngine.fetchQueryStreaming({tableId: 'Table1', sort: ['id']}, options);
+    const result1 = await dataEngine.fetchQueryStreaming({}, {tableId: 'Table1', sort: ['id']}, options);
     assert.equal(result1.value.tableId, 'Table1');
     assert.deepEqual(result1.value.colIds, ['id', 'Name', 'Email', 'MyDate', 'Age']);
 
-    await assert.isRejected(dataEngine.fetchQueryStreaming({tableId: 'Table1', sort: ['id'], limit: 1}, options),
+    await assert.isRejected(dataEngine.fetchQueryStreaming({}, {tableId: 'Table1', sort: ['id'], limit: 1}, options),
       /cannot start a transaction within a transaction|connection is busy executing a query/);
 
     // Try reading a chunk, to start the streaming portion.
@@ -116,25 +116,25 @@ describe('FetchStreaming', function() {
     assert.lengthOf(chunk.value, 500);
 
     // Another parallel query should also be rejected, though the error happens to be different.
-    await assert.isRejected(dataEngine.fetchQueryStreaming({tableId: 'Table1', sort: ['id']}, options),
+    await assert.isRejected(dataEngine.fetchQueryStreaming({}, {tableId: 'Table1', sort: ['id']}, options),
       /cannot start a transaction within a transaction|connection is busy executing a query/);
   }
 
-  async function testOverlappingWithAbort(dataEngine: IDataEngine) {
+  async function testOverlappingWithAbort(dataEngine: IDataEngineCli) {
     const options: QueryStreamingOptions = {
       timeoutMs: 60_000,
       chunkRows: 500,
     };
     const abortController1 = new AbortController();
-    const result1 = await dataEngine.fetchQueryStreaming({tableId: 'Table1', sort: ['id']}, options,
-      abortController1.signal);
+    const result1 = await dataEngine.fetchQueryStreaming({abortSignal: abortController1.signal},
+      {tableId: 'Table1', sort: ['id']}, options);
     assert.equal(result1.value.tableId, 'Table1');
     assert.deepEqual(result1.value.colIds, ['id', 'Name', 'Email', 'MyDate', 'Age']);
 
     abortController1.abort();
     const abortController2 = new AbortController();
-    const result2 = await dataEngine.fetchQueryStreaming({tableId: 'Table1', sort: ['id']}, options,
-      abortController2.signal);
+    const result2 = await dataEngine.fetchQueryStreaming({abortSignal: abortController2.signal},
+      {tableId: 'Table1', sort: ['id']}, options);
     assert.equal(result2.value.tableId, 'Table1');
     assert.deepEqual(result2.value.colIds, ['id', 'Name', 'Email', 'MyDate', 'Age']);
 
@@ -145,8 +145,8 @@ describe('FetchStreaming', function() {
     // Aborting at this stage should also work, so the next query can start right away.
     abortController2.abort();
     const abortController3 = new AbortController();
-    const result3 = await dataEngine.fetchQueryStreaming({tableId: 'Table1', sort: ['id']}, options,
-      abortController3.signal);
+    const result3 = await dataEngine.fetchQueryStreaming({abortSignal: abortController3.signal},
+      {tableId: 'Table1', sort: ['id']}, options);
     assert.equal(result3.value.tableId, 'Table1');
     assert.deepEqual(result3.value.colIds, ['id', 'Name', 'Email', 'MyDate', 'Age']);
   }

@@ -19,9 +19,9 @@ function randomTimestamp() {
 }
 
 namespace sample2 {
-  export function createTable(dataEngine: IDataEngine, tableId: string) {
+  export function createTable(dataEngine: IDataEngine<unknown>, tableId: string) {
     // Run actions to create a table.
-    return dataEngine.applyActions({actions: [
+    return dataEngine.applyActions({}, {actions: [
       ['AddTable', 'Table1', [
         {id: 'SomeName', type: 'Text',       isFormula: false, formula: ''},
         {id: 'Email', type: 'Text',          isFormula: false, formula: ''},
@@ -30,7 +30,7 @@ namespace sample2 {
     ]});
   }
 
-  export async function populateTable(dataEngine: IDataEngine, tableId: string, numChunks: number, chunkSize: number) {
+  export async function populateTable(dataEngine: IDataEngine<unknown>, tableId: string, numChunks: number, chunkSize: number) {
     // Run actions to create numChunks * chunkSize rows in our table.
     for (let chunk = 0; chunk < numChunks; chunk++) {
       const array = Array(chunkSize);
@@ -43,7 +43,7 @@ namespace sample2 {
           RandomTime: Array.from(array, (x, i) => randomTimestamp()),
         }
       ];
-      await dataEngine.applyActions({actions: [addAction]});
+      await dataEngine.applyActions({}, {actions: [addAction]});
     }
   }
 }
@@ -84,7 +84,7 @@ describe('TestRank', function() {
           for (let i = 0; i < N; i++) {
             const timestamp = randomTimestamp();
             const filters: QueryFilters = ['GtE', ['Name', 'RandomTime'], ['Const', timestamp]];
-            const row = await dataEngine.fetchQuery({tableId: 'Table1', filters, sort: ['RandomTime'], limit: 1});
+            const row = await dataEngine.fetchQuery({}, {tableId: 'Table1', filters, sort: ['RandomTime'], limit: 1});
             assert.isAtLeast(row.tableData.RandomTime[0] as number, timestamp);
             seenTimestamps.push(row.tableData.RandomTime[0] as number);
             console.log(db.prepare('SELECT COUNT(id) FROM Table1 WHERE RandomTime < ?').get(timestamp));

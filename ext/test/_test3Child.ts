@@ -26,7 +26,7 @@ async function withDataEngineClient<T>(url: string, cb: (dataEngine: DataEngineC
 const readDBOptions: {[name: string]: (url: string, limit?: number) => Promise<unknown>} = {
   async readDBFull(url: string, limit?: number) {
     return await withDataEngineClient(url, async (dataEngine) => {
-      const result = await dataEngine.fetchQuery({tableId: 'Table1', sort: ['id'], limit});
+      const result = await dataEngine.fetchQuery({}, {tableId: 'Table1', sort: ['id'], limit});
       let count = 0;
       let sumRowIds = 0;
       for (const rowId of result.tableData.id) {
@@ -44,7 +44,7 @@ const readDBOptions: {[name: string]: (url: string, limit?: number) => Promise<u
 
   async readDBStreaming(url: string, limit?: number) {
     return await withDataEngineClient(url, async (dataEngine) => {
-      const result = await dataEngine.fetchQueryStreaming({tableId: 'Table1', sort: ['id'], limit}, {
+      const result = await dataEngine.fetchQueryStreaming({}, {tableId: 'Table1', sort: ['id'], limit}, {
         timeoutMs: 60_000,
         chunkRows: 500,
       });

@@ -1,9 +1,9 @@
 import {DocAction} from 'ext/app/megagrist/lib/DocActions';
 import {IDataEngine} from 'ext/app/megagrist/lib/IDataEngine';
 
-export function createTable(dataEngine: IDataEngine, tableId: string) {
+export function createTable(dataEngine: IDataEngine<unknown>, tableId: string) {
   // Run actions to create a table.
-  return dataEngine.applyActions({actions: [
+  return dataEngine.applyActions({}, {actions: [
     ['AddTable', 'Table1', [
       {id: 'Name', type: 'Text',   isFormula: false, formula: ''},
       {id: 'Email', type: 'Text',  isFormula: false, formula: ''},
@@ -13,7 +13,7 @@ export function createTable(dataEngine: IDataEngine, tableId: string) {
   ]});
 }
 
-export async function populateTable(dataEngine: IDataEngine, tableId: string, numChunks: number, chunkSize: number) {
+export async function populateTable(dataEngine: IDataEngine<unknown>, tableId: string, numChunks: number, chunkSize: number) {
   // Run actions to create numChunks * chunkSize rows in our table.
   for (let chunk = 0; chunk < numChunks; chunk++) {
     const array = Array(chunkSize);
@@ -27,6 +27,6 @@ export async function populateTable(dataEngine: IDataEngine, tableId: string, nu
         Age: Array.from(array, (x, i) => Math.floor(i / 10)),
       }
     ];
-    await dataEngine.applyActions({actions: [addAction]});
+    await dataEngine.applyActions({}, {actions: [addAction]});
   }
 }

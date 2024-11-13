@@ -7,7 +7,7 @@ import * as marshal from 'app/common/marshal';
 import {MEGA_ENGINE} from 'app/common/MegaEngineSettings';
 import {MinimalWebSocket} from 'app/common/MinimalWebSocket';
 import {WebSocketChannel} from 'app/megagrist/lib/WebSocketChannel';
-import {DataEnginePooled} from 'app/megagrist/lib/DataEngine';
+import {DataEngineCallContext, DataEnginePooled} from 'app/megagrist/lib/DataEngine';
 import {createDataEngineServer} from 'app/megagrist/lib/DataEngineServer';
 import {QueryStreamingOptions} from 'app/megagrist/lib/IDataEngine';
 import {Query, QueryResultStreaming} from 'app/megagrist/lib/types';
@@ -15,6 +15,7 @@ import {ExpandedQuery} from 'app/megagrist/lib/sqlConstruct';
 import {appSettings} from 'app/server/lib/AppSettings';
 import {expandQuery} from 'app/server/lib/ExpandedQuery';
 import * as ICreate from 'app/server/lib/ICreate';
+import {OptDocSession} from 'app/server/lib/DocSession';
 
 
 const enableMegaDataEngine = appSettings.section('dataEngine').flag('enableMega').readBool({
@@ -37,6 +38,10 @@ export class MegaDataEngine {
     return isEnabled ? new MegaDataEngine(dbPath, docData) : null;
   }
 
+  public static maybeMakeChannel(socket: MinimalWebSocket): WebSocketChannel|null {
+    return new WebSocketChannel(socket);
+  }
+
   private _dataEngine: DataEnginePooled;
 
   constructor(dbPath: string, docData: DocData) {
@@ -44,16 +49,22 @@ export class MegaDataEngine {
     // db.exec("PRAGMA journal_mode=WAL");  <-- TODO we want this, but leaving for later.
   }
 
-  public async applyUserActions(userActions: UserAction[]): Promise<ProcessedActionBundle> {
+  public async applyUserActions(
+    docSession: OptDocSession|null, userActions: UserAction[]
+  ): Promise<ProcessedActionBundle> {
     const actions = userActions as DocAction[];
-    const {results} = await this._dataEngine.applyActions({actions});
+    const context: DataEngineCallContext = {channel: docSession?.client?.getAuxChannel()};
+    const {results} = await this._dataEngine.applyActions(context, {actions});
     return {stored: actions, undo: [], retValues: results};
   }
 
-  public serve(socket: MinimalWebSocket): void {
-    const channel = new WebSocketChannel(socket);
+  public serve(channel: WebSocketChannel): void {
     createDataEngineServer(this._dataEngine, {channel, verbose: console.log});
   }
+}
+
+export namespace MegaDataEngine {
+  export type Channel = WebSocketChannel;
 }
 
 class UnmarshallingDataEngine extends DataEnginePooled {
@@ -62,7 +73,7 @@ class UnmarshallingDataEngine extends DataEnginePooled {
   }
 
   public async fetchQueryStreaming(
-    query: Query, options: QueryStreamingOptions, abortSignal?: AbortSignal
+    context: DataEngineCallContext, query: Query, options: QueryStreamingOptions
   ): Promise<QueryResultStreaming> {
 
     // We use the metadata about the table to get the grist types of columns, which determine how
@@ -77,7 +88,7 @@ class UnmarshallingDataEngine extends DataEnginePooled {
       expandedQuery = {...query, joins: expanded.joins, selects: expanded.selects};
     }
 
-    const queryResult = await super.fetchQueryStreaming(expandedQuery, options, abortSignal);
+    const queryResult = await super.fetchQueryStreaming(context, expandedQuery, options);
     const decoders = queryResult.value.colIds.map(c => getDecoder(tableData?.getColType(c)));
 
     async function *generateRows() {

@@ -63,7 +63,7 @@ describe('Test2', function() {
   async function readDBFull(dbPath: string, memory: Memory, limit?: number) {
     const db2: SqliteDatabase.Database = SqliteDatabase(dbPath, {});
     const dataEngine2 = new DataEngine(db2);
-    const result = await dataEngine2.fetchQuery({tableId: 'Table1', sort: ['id'], limit});
+    const result = await dataEngine2.fetchQuery({}, {tableId: 'Table1', sort: ['id'], limit});
     let count = 0;
     let sumRowIds = 0;
     for (const rowId of result.tableData.id) {
@@ -82,7 +82,7 @@ describe('Test2', function() {
   async function readDBStreaming(dbPath: string, memory: Memory, limit?: number) {
     const db2: SqliteDatabase.Database = SqliteDatabase(dbPath, {});
     const dataEngine2 = new DataEngine(db2);
-    const result = await dataEngine2.fetchQueryStreaming({tableId: 'Table1', sort: ['id'], limit}, {
+    const result = await dataEngine2.fetchQueryStreaming({}, {tableId: 'Table1', sort: ['id'], limit}, {
       timeoutMs: 60_000,
       chunkRows: 500,
     });

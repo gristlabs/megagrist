@@ -14,12 +14,13 @@ import type {CompareFunc} from 'app/common/gutil';
 import type {Sort} from 'app/common/SortSpec';
 import type {TableData} from 'app/client/models/TableData';
 import type {ParsedPredicateFormula, Query} from 'app/megagrist/lib/types';
-import type {IDataEngine} from 'app/megagrist/lib/IDataEngine';
 import type {UIRowId} from 'app/plugin/GristAPI';
 import {WebSocketChannel} from 'app/megagrist/lib/WebSocketChannel';
-import {DataEngineClient} from 'app/megagrist/lib/DataEngineClient';
+import {DataEngineClient, IDataEngineCli} from 'app/megagrist/lib/DataEngineClient';
 import type {IDisposableOwner} from 'grainjs';
 import assert from 'assert';
+
+type IDataEngine = IDataEngineCli;
 
 export class MegaDocModel {
   public static isEnabled(engine?: string): boolean {
@@ -155,7 +156,7 @@ class MegaRowSet extends DisposableWithEvents implements ISortedRowSet {
     const dataEngine = this._megaDocModel.dataEngine;
     // TODO: fetchQueryStreaming must take abortSignal, and stop sending data when aborted.
     const abortSignal = abortController.signal;
-    const result = await dataEngine.fetchQueryStreaming(query, {timeoutMs: 60000, chunkRows: 10000}, abortSignal);
+    const result = await dataEngine.fetchQueryStreaming({abortSignal}, query, {timeoutMs: 60000, chunkRows: 10000});
     console.warn("GOT COLIDS", result.value.colIds);
     if (this.isDisposed()) { abortController.abort(); }
     abortSignal.throwIfAborted();
@@ -194,7 +195,7 @@ class MegaRowSet extends DisposableWithEvents implements ISortedRowSet {
 
     console.warn("Query", query);
     const dataEngine = this._megaDocModel.dataEngine;
-    const result = await dataEngine.fetchQueryStreaming(query, {timeoutMs: 60000, chunkRows: 500});
+    const result = await dataEngine.fetchQueryStreaming({}, query, {timeoutMs: 60000, chunkRows: 500});
 
     for await (const chunk of result.chunks) {
       const colValues: TableColValues = {id: []};

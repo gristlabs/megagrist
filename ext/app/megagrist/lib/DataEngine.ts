@@ -1,15 +1,31 @@
 import {ActionSet, ApplyResultSet, Query, QueryResult, QueryResultStreaming, QuerySubId} from './types';
 import {CellValue} from './DocActions';
 import {IDataEngine, QueryStreamingOptions, QuerySubCallback} from './IDataEngine';
+import {SubscriptionOptions} from './IDataEngine';
 import {BindParams, ExpandedQuery, sqlSelectFromQuery} from './sqlConstruct';
 import {StoreDocAction} from './StoreDocAction';
 import SqliteDatabase from 'better-sqlite3';
 
-abstract class BaseDataEngine implements IDataEngine {
+interface Context {
+  // The important thing about channel is that it must be an object preserved for all calls on the
+  // same connection. It is used as a key in a WeakMap to keep track of the query subscriptions
+  // made by that connection.
+  channel?: {disconnectSignal: AbortSignal};
+
+  // Optionally, a call may include an AbortSignal, to allow it to abort a long-running operation.
+  abortSignal?: AbortSignal;
+}
+
+export type DataEngineCallContext = Context;
+
+abstract class BaseDataEngine implements IDataEngine<Context> {
   private _querySubs = new Map<number, Query>();
   private _nextQuerySub = 1;
 
-  public async fetchQuery(query: ExpandedQuery): Promise<QueryResult> {
+  public async fetchQuery(
+    context: Context, query: ExpandedQuery, options: SubscriptionOptions = {}
+  ): Promise<QueryResult> {
+    const subId = options.newSubCallback ? this._doQuerySubscribe(query, options.newSubCallback) : undefined;
     const bindParams = new BindParams();
     const sql = sqlSelectFromQuery(query, bindParams);
     // console.warn("fetchQuery", sql, bindParams.getParams());
@@ -21,6 +37,7 @@ abstract class BaseDataEngine implements IDataEngine {
         tableId: query.tableId,
         tableData: {id: []},
         actionNum: 0,       // TODO
+        subId,
       };
       for (const [index, col] of stmt.columns().entries()) {
         queryResult.tableData[col.name] = rows.map(r => r[index]);
@@ -30,8 +47,10 @@ abstract class BaseDataEngine implements IDataEngine {
   }
 
   public async fetchQueryStreaming(
-    query: ExpandedQuery, options: QueryStreamingOptions, abortSignal?: AbortSignal
+    context: Context, query: ExpandedQuery, options: QueryStreamingOptions & SubscriptionOptions,
   ): Promise<QueryResultStreaming> {
+    const subId = options.newSubCallback ? this._doQuerySubscribe(query, options.newSubCallback) : undefined;
+    const abortSignal = context?.abortSignal;
     const bindParams = new BindParams();
     const sql = sqlSelectFromQuery(query, bindParams);
     // console.warn("fetchQueryStreaming", sql, bindParams.getParams());
@@ -107,6 +126,7 @@ abstract class BaseDataEngine implements IDataEngine {
           tableId: query.tableId,
           actionNum: 0,       // TODO
           colIds,
+          subId,
         },
         chunks: generateRows(),
       };
@@ -119,24 +139,11 @@ abstract class BaseDataEngine implements IDataEngine {
     }
   }
 
-  // See querySubscribe for requirements on unsubscribing.
-  public async fetchAndSubscribe(query: Query, callback: QuerySubCallback): Promise<QueryResult> {
-    const subId = this._doQuerySubscribe(query, callback);
-    const queryResult = await this.fetchQuery(query);
-    return {...queryResult, subId};
-  }
-
-  // If querySubscribe succeeds, the data engine is now maintaining a subscription. It is the
-  // caller's responsibility to release it with queryUnsubscribe(), once it is no longer needed.
-  public async querySubscribe(query: Query, callback: QuerySubCallback): Promise<QuerySubId> {
-    return this._doQuerySubscribe(query, callback);
-  }
-
-  public async queryUnsubscribe(subId: QuerySubId): Promise<boolean> {
+  public async queryUnsubscribe(context: Context, subId: QuerySubId): Promise<boolean> {
     return this._querySubs.delete(subId);
   }
 
-  public async applyActions(actionSet: ActionSet): Promise<ApplyResultSet> {
+  public async applyActions(context: Context, actionSet: ActionSet): Promise<ApplyResultSet> {
     return this.withDB((db) => db.transaction((): ApplyResultSet => {
       // TODO: In the future, we need to pass actionSet through Access Rules,
       // Data Engine (to trigger anything synchronous), Access Rules again, all within a

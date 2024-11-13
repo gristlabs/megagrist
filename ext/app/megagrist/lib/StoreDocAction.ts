@@ -1,4 +1,5 @@
 import {BulkColValues, DocAction, isDataDocActionName} from './DocActions';
+import {isSchemaAction} from './DocActions';
 import {getSqlTypeInfo, quoteIdent} from './sqlUtil';
 import SqliteDatabase from 'better-sqlite3';
 
@@ -16,10 +17,12 @@ export class StoreDocAction {
   constructor(private _db: SqliteDatabase.Database) {}
 
   public store(action: DocAction) {
-    if (!isDataDocActionName(action[0])) {
-      throw new Error(`Unsupported action type: ${action[0]}`);
+    if (isSchemaAction(action)) {
+      return this[action[0]](action as any);
+    } else if (isDataDocActionName(action[0])) {
+      return this[action[0]](action as any);
     }
-    return this[action[0]](action as any);
+    throw new Error(`Unsupported action type: ${action[0]}`);
   }
 
   // TODO For all data operations, including UPDATE, there are ways to deal with multiple rows

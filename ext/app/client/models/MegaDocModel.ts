@@ -79,6 +79,9 @@ export class MegaDocModel {
   private _initDataEngineWithSocket(socket: MinimalWebSocket) {
     const channel = new WebSocketChannel(socket);
     this._dataEngine = new DataEngineClient({channel, verbose: console.log});
+    this._dataEngine.addActionListener({}, (actions) => {
+      console.warn("GOT ACTIONS", actions);
+    });
   }
 }
 

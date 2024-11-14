@@ -1,16 +1,20 @@
-import {ActionSet, ApplyResultSet, Query, QueryResult, QueryResultStreaming, QuerySubId} from './types';
+import {ActionSet, ApplyResultSet, QueryResult, QueryResultStreaming} from './types';
 import {CellValue} from './DocActions';
-import {IDataEngine, QueryStreamingOptions, QuerySubCallback} from './IDataEngine';
-import {SubscriptionOptions} from './IDataEngine';
+import {IDataEngine, QueryStreamingOptions} from './IDataEngine';
 import {BindParams, ExpandedQuery, sqlSelectFromQuery} from './sqlConstruct';
 import {StoreDocAction} from './StoreDocAction';
 import SqliteDatabase from 'better-sqlite3';
+import {Emitter} from 'grainjs';
+
+interface MinimalChannel {
+  disconnectSignal: AbortSignal;
+}
 
 interface Context {
   // The important thing about channel is that it must be an object preserved for all calls on the
   // same connection. It is used as a key in a WeakMap to keep track of the query subscriptions
   // made by that connection.
-  channel?: {disconnectSignal: AbortSignal};
+  channel?: MinimalChannel;
 
   // Optionally, a call may include an AbortSignal, to allow it to abort a long-running operation.
   abortSignal?: AbortSignal;
@@ -19,13 +23,9 @@ interface Context {
 export type DataEngineCallContext = Context;
 
 abstract class BaseDataEngine implements IDataEngine<Context> {
-  private _querySubs = new Map<number, Query>();
-  private _nextQuerySub = 1;
+  private _actionSetEmitter = new Emitter();
 
-  public async fetchQuery(
-    context: Context, query: ExpandedQuery, options: SubscriptionOptions = {}
-  ): Promise<QueryResult> {
-    const subId = options.newSubCallback ? this._doQuerySubscribe(query, options.newSubCallback) : undefined;
+  public async fetchQuery(context: Context, query: ExpandedQuery): Promise<QueryResult> {
     const bindParams = new BindParams();
     const sql = sqlSelectFromQuery(query, bindParams);
     // console.warn("fetchQuery", sql, bindParams.getParams());
@@ -37,7 +37,6 @@ abstract class BaseDataEngine implements IDataEngine<Context> {
         tableId: query.tableId,
         tableData: {id: []},
         actionNum: 0,       // TODO
-        subId,
       };
       for (const [index, col] of stmt.columns().entries()) {
         queryResult.tableData[col.name] = rows.map(r => r[index]);
@@ -47,9 +46,8 @@ abstract class BaseDataEngine implements IDataEngine<Context> {
   }
 
   public async fetchQueryStreaming(
-    context: Context, query: ExpandedQuery, options: QueryStreamingOptions & SubscriptionOptions,
+    context: Context, query: ExpandedQuery, options: QueryStreamingOptions
   ): Promise<QueryResultStreaming> {
-    const subId = options.newSubCallback ? this._doQuerySubscribe(query, options.newSubCallback) : undefined;
     const abortSignal = context?.abortSignal;
     const bindParams = new BindParams();
     const sql = sqlSelectFromQuery(query, bindParams);
@@ -126,7 +124,6 @@ abstract class BaseDataEngine implements IDataEngine<Context> {
           tableId: query.tableId,
           actionNum: 0,       // TODO
           colIds,
-          subId,
         },
         chunks: generateRows(),
       };
@@ -137,10 +134,6 @@ abstract class BaseDataEngine implements IDataEngine<Context> {
       cleanup();
       throw e;
     }
-  }
-
-  public async queryUnsubscribe(context: Context, subId: QuerySubId): Promise<boolean> {
-    return this._querySubs.delete(subId);
   }
 
   public async applyActions(context: Context, actionSet: ActionSet): Promise<ApplyResultSet> {
@@ -159,9 +152,17 @@ abstract class BaseDataEngine implements IDataEngine<Context> {
       // NOTE: We could use a separate DB connection with an open read transaction to avoid
       // keeping the write transaction open; consider it if needed for performance.
       // (Efficient subscriptions are their own project, not done yet.)
+      this._actionSetEmitter.emit(actionSet);
 
       return {results};
     }).immediate());
+  }
+
+  // Adds a callback to be called when any change happens in the document.
+  public addActionListener(context: Context, callback: (actionSet: ActionSet) => void) {
+    const listener = this._actionSetEmitter.addListener(callback);
+    context.channel?.disconnectSignal.addEventListener('abort', () => listener.dispose(), {once: true});
+    return listener;
   }
 
   protected abstract acquireDB(): SqliteDatabase.Database;
@@ -177,12 +178,6 @@ abstract class BaseDataEngine implements IDataEngine<Context> {
     } finally {
       this.releaseDB(db);
     }
-  }
-
-  private _doQuerySubscribe(query: Query, callback: QuerySubCallback): QuerySubId {
-    const subId = this._nextQuerySub++;
-    this._querySubs.set(subId, query);
-    return subId;
   }
 }
 

@@ -41,18 +41,12 @@ export interface Query {
   rowIds?: number[];
 }
 
-// Identifier for a subscription, which can be used to unsubscribe.
-export type QuerySubId = number;
-
 export interface QueryResultCommon {
   tableId: string;
 
   // Each state of the database is identified by an actionNum. Each change increments it. (Some
   // merged changes may increment it by more than 1.)
   actionNum: number;
-
-  // If subscribed at the same time, the result may include a subscription ID.
-  subId?: QuerySubId;
 
   // It may also be appropriate to include attachment metadata referred to in tableData.
   // attachments?: TableColValues;

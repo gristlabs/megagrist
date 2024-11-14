@@ -21,19 +21,28 @@ export function createDataEngineServer(
   dataEngine: IDataEngineSvr,
   options: Pick<StreamingRpcOptions, "channel"|"verbose">
 ) {
-  return createStreamingRpc({
+  const rpc = createStreamingRpc({
     ...options,
     logWarn: (message: string, err: Error) => { console.warn(message, err); },
     callHandler: callHandler.bind(null, dataEngine, options.channel),
     signalHandler: () => { throw new Error("No signals implemented"); },
   });
+
+  // NOTE that in this approach, server actions are always noticed and sent to the client. The
+  // client's own addActionListerner only determines where received actions go next. That's not
+  // wasteful in practice since clients normally subscribe, and we keep actions reasonably small.
+  // Channel's disconnectSignal is used by dataEngine to unsubscribe automatically, so we don't
+  // need a dedicated interface for that.
+  dataEngine.addActionListener({channel: options.channel},
+    (actionSet) => rpc.sendSignal({value: ["action", actionSet]}));
+
+  return rpc;
 }
 
 // Maps each supported method name to whether or not it returns a streaming result.
-const dataEngineMethods: {[key in keyof IDataEngineSvr]: boolean} = {
+const dataEngineMethods: {[key in keyof IDataEngineSvr]?: boolean} = {
   fetchQuery: false,
   fetchQueryStreaming: true,
-  queryUnsubscribe: false,
   applyActions: false,
 };
 

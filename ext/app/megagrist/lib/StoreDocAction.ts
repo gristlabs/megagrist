@@ -1,3 +1,4 @@
+import {AddRecord, UpdateRecord, RemoveRecord} from 'app/common/DocActions';
 import {BulkColValues, DocAction, isDataDocActionName} from './DocActions';
 import {isSchemaAction} from './DocActions';
 import {getSqlTypeInfo, quoteIdent} from './sqlUtil';
@@ -39,6 +40,17 @@ export class StoreDocAction {
   // allows a single statement for any number of rows, without batching! Includes other overhead
   // though, so performance is TBD.
 
+  public AddRecord([_, tableId, rowId, colValues]: AddRecord) {
+    return this.BulkAddRecord(['BulkAddRecord', tableId, [rowId],
+      Object.fromEntries(Object.entries(colValues).map(([k, v]) => [k, [v]]))]);
+  }
+  public UpdateRecord([_, tableId, rowId, colValues]: UpdateRecord) {
+    return this.BulkUpdateRecord(['BulkUpdateRecord', tableId, [rowId],
+      Object.fromEntries(Object.entries(colValues).map(([k, v]) => [k, [v]]))]);
+  }
+  public RemoveRecord([_, tableId, rowId]: RemoveRecord) {
+    return this.BulkRemoveRecord(['BulkRemoveRecord', tableId, [rowId]]);
+  }
 
   public BulkAddRecord([_, tableId, rowIds, colValues]: DocAction.BulkAddRecord) {
     if (rowIds.length === 0) { return; }

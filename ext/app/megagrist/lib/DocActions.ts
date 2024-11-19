@@ -41,6 +41,9 @@ export type DocAction = common.DocAction;
 
 export function isDataDocActionName(actionName: string): actionName is DataDocAction[0] {
   switch (actionName) {
+    case 'AddRecord':
+    case 'RemoveRecord':
+    case 'UpdateRecord':
     case 'BulkAddRecord':
     case 'BulkRemoveRecord':
     case 'BulkUpdateRecord':

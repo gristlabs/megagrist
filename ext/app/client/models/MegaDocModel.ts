@@ -1,12 +1,14 @@
+// TODO darn, linting with typings isn't working in my editor in this directory :(
 import type {GristWSConnection} from 'app/client/components/GristWSConnection';
 import koArray, {KoArray} from 'app/client/lib/koArray';
+import {DocData} from 'app/client/models/DocData';
 import {DataRowModel} from 'app/client/models/DataRowModel';
 import {reportError} from 'app/client/models/errors';
 import {ISortedRowSet, RowList, RowSource} from 'app/client/models/rowset';
 import {FilterColValues, QueryOperation} from 'app/common/ActiveDocAPI';
 import {delay} from 'app/common/delay';
 import {DisposableWithEvents} from 'app/common/DisposableWithEvents';
-import {CellValue, TableColValues, toTableDataAction} from 'app/common/DocActions';
+import {CellValue, DocAction, TableColValues, toTableDataAction} from 'app/common/DocActions';
 import {isMegaEngineEnabled} from 'app/common/MegaEngineSettings';
 import type {MinimalWebSocket} from 'app/common/MinimalWebSocket';
 import type {GristLoadConfig} from 'app/common/gristUrls';
@@ -17,7 +19,7 @@ import type {ParsedPredicateFormula, Query} from 'app/megagrist/lib/types';
 import type {UIRowId} from 'app/plugin/GristAPI';
 import {WebSocketChannel} from 'app/megagrist/lib/WebSocketChannel';
 import {DataEngineClient, IDataEngineCli} from 'app/megagrist/lib/DataEngineClient';
-import type {IDisposableOwner} from 'grainjs';
+import {Emitter, IDisposableOwner} from 'grainjs';
 import assert from 'assert';
 
 type IDataEngine = IDataEngineCli;
@@ -28,25 +30,29 @@ export class MegaDocModel {
     return isMegaEngineEnabled(engine, gristConfig?.supportEngines);
   }
 
-  public static maybeCreate(conn: GristWSConnection, engine?: string): MegaDocModel|null {
+  public static maybeCreate(conn: GristWSConnection, docData: DocData): MegaDocModel|null {
+    const engine = docData.docSettings().engine;
     if (!this.isEnabled(engine)) {
       return null;
     }
-    const megaDataModel = new MegaDocModel();
+    const megaDocModel = new MegaDocModel(docData);
     const socket = conn.getAuxSocket();
     if (socket) {
-      megaDataModel._initDataEngineWithSocket(socket);
+      megaDocModel._initDataEngineWithSocket(socket);
     } else {
       const onConnected = () => {
         conn.off('connectState', onConnected);
-        megaDataModel._initDataEngineWithSocket(conn.getAuxSocket()!);
+        megaDocModel._initDataEngineWithSocket(conn.getAuxSocket()!);
       };
       conn.on('connectState', onConnected);
     }
-    return megaDataModel;
+    return megaDocModel;
   }
 
   private _dataEngine: IDataEngine|null = null;
+  private _tableEmitters = new WeakMap<TableData, Emitter>();
+
+  constructor(private _docData: DocData) {}
 
   public createSortedRowSet(owner: IDisposableOwner, tableData: TableData, columns: TableData): ISortedRowSet {
     return MegaRowSet.create(owner, this, tableData, columns);
@@ -55,15 +61,25 @@ export class MegaDocModel {
   public getRowModelClass(rowSet: MegaRowSet): typeof DataRowModel{
     return class MegaRowModel extends DataRowModel {
       public assign(rowId: number|'new'|null) {
-        super.assign(rowId);
+        this._withLoadedRow(rowId, () => super.assign(rowId), {eager: true});
+      }
+      protected _assignColumn(colName: string) {
+        this._withLoadedRow(this.getRowId(), () => super._assignColumn(colName), {eager: false});
+      }
+
+      // Eager says to also call the callback before waiting for the row to load.
+      private async _withLoadedRow(rowId: number|'new'|null, callback: () => void, options: {eager: boolean}) {
         const p: true|Promise<void> = rowSet.loadRow(rowId);
-        if (p !== true) {
-          p.then(() => {
-            // Check that this rowModel is still active and still for the row we loaded.
-            if (this.getRowId() === rowId && !this.isDisposed()) {
-              super.assign(rowId);
-            }
-          }, () => {});
+        if (p === true) {
+          callback();
+        } else {
+          if (options.eager) {
+            callback();
+          }
+          await p;
+          if (this.getRowId() === rowId && !this.isDisposed()) {
+            callback();
+          }
         }
       }
     };
@@ -76,11 +92,25 @@ export class MegaDocModel {
     return this._dataEngine;
   }
 
+  public getTableEmitter(tableData: TableData): Emitter {
+    let emitter = this._tableEmitters.get(tableData);
+    if (!emitter) {
+      emitter = new Emitter();
+      this._tableEmitters.set(tableData, emitter);
+    }
+    return emitter;
+  }
+
   private _initDataEngineWithSocket(socket: MinimalWebSocket) {
     const channel = new WebSocketChannel(socket);
     this._dataEngine = new DataEngineClient({channel, verbose: console.log});
     this._dataEngine.addActionListener({}, (actions) => {
-      console.warn("GOT ACTIONS", actions);
+      console.warn("GOT ACTIONS", actions.actions);
+      for (const action of actions.actions) {
+        const tableId = action[1];
+        const tableData = this._docData.getTable(tableId);
+        if (tableData) { this.getTableEmitter(tableData).emit(action); }
+      }
     });
   }
 }
@@ -104,6 +134,7 @@ class MegaRowSet extends DisposableWithEvents implements ISortedRowSet {
   constructor(private _megaDocModel: MegaDocModel, private _tableData: TableData, private _columns: TableData) {
     super();
     this._koArray = this.autoDispose(koArray<UIRowId>());
+    this.autoDispose(_megaDocModel.getTableEmitter(_tableData)?.addListener(this._onAction.bind(this)));
   }
 
   public loadRow(rowId: number|'new'|null): true|Promise<void> {
@@ -131,6 +162,23 @@ class MegaRowSet extends DisposableWithEvents implements ISortedRowSet {
   public onAddRows(rows: RowList) { this._rebuildRowSet(); }
   public onRemoveRows(rows: RowList) { this._rebuildRowSet(); }
   public onUpdateRows(rows: RowList) { this._rebuildRowSet(); }
+
+  private _onAction(action: DocAction) {
+    console.warn("GOT ACTION!", action);
+    // this._rebuildRowSet();
+    if (action[0] == "UpdateRecord") {
+      console.warn("UPDATE RECORD");
+      const rowId = action[2];
+      this._rowFetcher.invalidate(rowId);
+      this.trigger('rowNotify', [rowId], action);
+      // this.loadRow(action[2]);
+      // NO, want to do rowModel.assign?
+    } else if (action[0] == "BulkUpdateRecord") {
+      const rowIds = action[2];
+      for (const r of rowIds) { this._rowFetcher.invalidate(r); }
+      this.trigger('rowNotify', rowIds, action);
+    }
+  }
 
   private _onError(err: Error|unknown) {
     if (err instanceof Error && err.message?.includes('aborted')) { return; }
@@ -178,6 +226,7 @@ class MegaRowSet extends DisposableWithEvents implements ISortedRowSet {
     }
     this._tableData.dataLoadedEmitter.emit([], []);
     this._doRebuildRowSetFinish();
+    console.warn("TABLEDATA", this._tableData);
   }
 
   private _doRebuildRowSetFinish(err?: Error|unknown) {
@@ -271,6 +320,10 @@ class RowFetcher {
       this._pendingRows?.get(rowId) ||
       this._queuedRows.get(rowId) ||
       this._addRowToQueue(rowId));
+  }
+
+  public invalidate(rowId: number) {
+    this._loadedRows.delete(rowId);
   }
 
   private _addRowToQueue(rowId: number) {

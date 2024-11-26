@@ -5,6 +5,7 @@ import {DocData} from 'app/client/models/DocData';
 import {DataRowModel} from 'app/client/models/DataRowModel';
 import {reportError} from 'app/client/models/errors';
 import {ISortedRowSet, RowList, RowSource} from 'app/client/models/rowset';
+import * as rowset from 'app/client/models/rowset';
 import {FilterColValues, QueryOperation} from 'app/common/ActiveDocAPI';
 import {delay} from 'app/common/delay';
 import {DisposableWithEvents} from 'app/common/DisposableWithEvents';
@@ -165,11 +166,32 @@ class MegaRowSet extends DisposableWithEvents implements ISortedRowSet {
 
   private _onAction(action: DocAction) {
     console.warn("GOT ACTION!", action);
+    // TODO If a column is affected that's used in sort or filter, or for add/remove events, need
+    // to update order of rows, ideally without rebuilding the full row set.
     // this._rebuildRowSet();
+
+    // TODO For actions like Add, tableData.receiveAction() may not be the right thing (may add rows we
+    // don't care to load; but also, that may be fine).
     if (action[0] == "BulkUpdateRecord") {
       const rowIds = action[2];
-      for (const r of rowIds) { this._rowFetcher.invalidate(r); }
-      this.trigger('rowNotify', rowIds, action);
+      if (rowIds.length > 0) {
+        // Normal action, used for small changes. We can take values directly from the action.
+
+        // Get the action applied to TableData. This triggers other events, but we, as the rowset,
+        // don't listen to them (to skip unnecessary work), and emit the needed event manually.
+        // Action may include rows not loaded; those should get ignored by TableData and
+        // LazyArrayModel respectively.
+        this._tableData.receiveAction(action);
+        this.trigger('rowNotify', rowIds, action);
+      } else {
+        // Stripped action, used for large changes. We have to re-fetch all rows we care about. We
+        // do it by invalidating all loaded rows and telling the "models" (LazyArrayModel &
+        // RowModel instances) that the action applies to all rows. It so happens that
+        // BaseRowModel pays attention to which columns changed but doesn't mind that rowIds list
+        // is empty, so calls _assignColumn which does the right thing.
+        this._rowFetcher.clearLoaded();
+        this.trigger('rowNotify', rowset.ALL, action);
+      }
     }
   }
 
@@ -317,6 +339,10 @@ class RowFetcher {
 
   public invalidate(rowId: number) {
     this._loadedRows.delete(rowId);
+  }
+
+  public clearLoaded() {
+    this._loadedRows.clear();
   }
 
   private _addRowToQueue(rowId: number) {

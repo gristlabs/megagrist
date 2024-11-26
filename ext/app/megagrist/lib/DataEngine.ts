@@ -1,10 +1,16 @@
 import {ActionSet, ApplyResultSet, QueryResult, QueryResultStreaming} from './types';
-import {CellValue} from './DocActions';
+import {CellValue, DocAction, isDataDocAction} from './DocActions';
 import {IDataEngine, QueryStreamingOptions} from './IDataEngine';
 import {BindParams, ExpandedQuery, sqlSelectFromQuery} from './sqlConstruct';
 import {StoreDocAction} from './StoreDocAction';
 import SqliteDatabase from 'better-sqlite3';
 import {Emitter} from 'grainjs';
+
+export const Deps = {
+  // Actions affecting more than this many rows will get stripped (leaving the work of fetching
+  // details to the client).
+  MAX_SMALL_ACTION_ROW_IDS: 100,
+}
 
 interface MinimalChannel {
   disconnectSignal: AbortSignal;
@@ -148,12 +154,13 @@ abstract class BaseDataEngine implements IDataEngine<Context> {
       for (const action of actionSet.actions) {
         results.push(storeDocAction.store(action));
       }
-      // TODO For each subscription, query and queue the data to send to it.
-      // NOTE: We could use a separate DB connection with an open read transaction to avoid
-      // keeping the write transaction open; consider it if needed for performance.
-      // (Efficient subscriptions are their own project, not done yet.)
-      this._actionSetEmitter.emit(actionSet);
 
+      // Emit actions, which every listener (who called addActionListeners) will get. We strip
+      // down large actions; caller will know to re-fetch parts in that case.
+      // TODO actions we emit need to be filtered by Access Rules for each recipient. (After
+      // stripping, all actions should be small, so filtering should be fast.)
+      const actionsToEmit: DocAction[] = actionSet.actions.map(a => maybeStripAction(a));
+      this._actionSetEmitter.emit({actions: actionsToEmit});
       return {results};
     }).immediate());
   }
@@ -226,4 +233,19 @@ export class DataEnginePooled extends BaseDataEngine {
 declare var AbortSignal: typeof globalThis.AbortSignal & {
   timeout(milliseconds: number): AbortSignal;
   any(signals: AbortSignal[]): AbortSignal;
+}
+
+function maybeStripAction(action: DocAction): DocAction {
+  if (isDataDocAction(action)) {
+    const [actionName, tableId, rowIds, colValues] = action;
+    if (rowIds.length > Deps.MAX_SMALL_ACTION_ROW_IDS) {
+      if (actionName === "BulkRemoveRecord") {
+        return [actionName, tableId, []];
+      } else {    // Typescript knows action is one of the remaining *Data* DocActions.
+        const newColValues = Object.fromEntries(Object.entries(colValues).map(([k, v]) => [k, []]));
+        return [actionName, tableId, [], newColValues];
+      }
+    }
+  }
+  return action;
 }

@@ -166,14 +166,7 @@ class MegaRowSet extends DisposableWithEvents implements ISortedRowSet {
   private _onAction(action: DocAction) {
     console.warn("GOT ACTION!", action);
     // this._rebuildRowSet();
-    if (action[0] == "UpdateRecord") {
-      console.warn("UPDATE RECORD");
-      const rowId = action[2];
-      this._rowFetcher.invalidate(rowId);
-      this.trigger('rowNotify', [rowId], action);
-      // this.loadRow(action[2]);
-      // NO, want to do rowModel.assign?
-    } else if (action[0] == "BulkUpdateRecord") {
+    if (action[0] == "BulkUpdateRecord") {
       const rowIds = action[2];
       for (const r of rowIds) { this._rowFetcher.invalidate(r); }
       this.trigger('rowNotify', rowIds, action);

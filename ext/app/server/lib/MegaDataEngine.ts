@@ -1,11 +1,13 @@
 import {ProcessedActionBundle} from 'app/common/AlternateActions';
-import {CellValue, DocAction, UserAction} from 'app/common/DocActions';
+import {CellValue, UserAction} from 'app/common/DocActions';
+import {AddRecord, UpdateRecord, RemoveRecord} from 'app/common/DocActions';
 import {DocData} from 'app/common/DocData';
 import {EngineCode} from 'app/common/DocumentSettings';
 import {isListType} from 'app/common/gristTypes';
 import * as marshal from 'app/common/marshal';
 import {MEGA_ENGINE} from 'app/common/MegaEngineSettings';
 import {MinimalWebSocket} from 'app/common/MinimalWebSocket';
+import {DocAction, isDataDocAction} from 'app/megagrist/lib/DocActions';
 import {WebSocketChannel} from 'app/megagrist/lib/WebSocketChannel';
 import {DataEngineCallContext, DataEnginePooled} from 'app/megagrist/lib/DataEngine';
 import {createDataEngineServer} from 'app/megagrist/lib/DataEngineServer';
@@ -52,7 +54,7 @@ export class MegaDataEngine {
   public async applyUserActions(
     docSession: OptDocSession|null, userActions: UserAction[]
   ): Promise<ProcessedActionBundle> {
-    const actions = userActions as DocAction[];
+    const actions: DocAction[] = userActions.map(a => transformUserAction(a));
     const context: DataEngineCallContext = {channel: docSession?.client?.getAuxChannel()};
     const {results} = await this._dataEngine.applyActions(context, {actions});
     return {stored: actions, undo: [], retValues: results};
@@ -127,3 +129,34 @@ function getDecoder(gristType?: string): DecoderFunc {
   }
   return baseDecoder;
 }
+
+
+/**
+ * We currently only accept UserActions that happen to be DocActions, only data ones (not schema
+ * ones), and transform single-record actions to bulk actions, so that code that deals with data
+ * actions doesn't need to bother with multiple variations.
+ */
+function transformUserAction(userAction: UserAction): DocAction {
+  const actionName = userAction[0];
+  const method = _transformUserAction[actionName as keyof typeof _transformUserAction];
+  if (typeof method === 'function') {
+    return method(userAction as any);
+  } else if (isDataDocAction(userAction as DocAction)) {
+    return userAction as DocAction;
+  }
+  throw new Error(`UserAction unsupported: ${actionName}`);
+}
+
+const _transformUserAction = {
+  AddRecord([_, tableId, rowId, colValues]: AddRecord): DocAction.BulkAddRecord {
+    return ['BulkAddRecord', tableId, [rowId],
+      Object.fromEntries(Object.entries(colValues).map(([k, v]) => [k, [v]]))];
+  },
+  UpdateRecord([_, tableId, rowId, colValues]: UpdateRecord): DocAction.BulkUpdateRecord {
+    return ['BulkUpdateRecord', tableId, [rowId],
+      Object.fromEntries(Object.entries(colValues).map(([k, v]) => [k, [v]]))];
+  },
+  RemoveRecord([_, tableId, rowId]: RemoveRecord): DocAction.BulkRemoveRecord {
+    return ['BulkRemoveRecord', tableId, [rowId]];
+  },
+};

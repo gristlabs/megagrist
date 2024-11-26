@@ -39,18 +39,6 @@ export class StoreDocAction {
   // allows a single statement for any number of rows, without batching! Includes other overhead
   // though, so performance is TBD.
 
-  public AddRecord([_, tableId, rowId, colValues]: DocAction.AddRecord) {
-    return this.BulkAddRecord(['BulkAddRecord', tableId, [rowId],
-      Object.fromEntries(Object.entries(colValues).map(([k, v]) => [k, [v]]))]);
-  }
-  public UpdateRecord([_, tableId, rowId, colValues]: DocAction.UpdateRecord) {
-    return this.BulkUpdateRecord(['BulkUpdateRecord', tableId, [rowId],
-      Object.fromEntries(Object.entries(colValues).map(([k, v]) => [k, [v]]))]);
-  }
-  public RemoveRecord([_, tableId, rowId]: DocAction.RemoveRecord) {
-    return this.BulkRemoveRecord(['BulkRemoveRecord', tableId, [rowId]]);
-  }
-
   public BulkAddRecord([_, tableId, rowIds, colValues]: DocAction.BulkAddRecord) {
     if (rowIds.length === 0) { return; }
     const cols = [Deps.ROW_ID_COL, ...Object.keys(colValues)].map(quoteIdent);

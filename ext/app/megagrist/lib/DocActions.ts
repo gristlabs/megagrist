@@ -7,9 +7,6 @@ import * as common from 'app/common/DocActions';
 
 // Reduced version of Grist's current DocActions, omits single-record data actions.
 export namespace DocAction {
-  export type AddRecord = common.AddRecord;
-  export type RemoveRecord = common.RemoveRecord;
-  export type UpdateRecord = common.UpdateRecord;
   export type BulkAddRecord = common.BulkAddRecord;
   export type BulkRemoveRecord = common.BulkRemoveRecord;
   export type BulkUpdateRecord = common.BulkUpdateRecord;
@@ -24,9 +21,6 @@ export namespace DocAction {
 }
 
 export type DataDocAction = (
-  DocAction.AddRecord |
-  DocAction.RemoveRecord |
-  DocAction.UpdateRecord |
   DocAction.BulkAddRecord |
   DocAction.BulkRemoveRecord |
   DocAction.BulkUpdateRecord |
@@ -45,11 +39,8 @@ export type SchemaDocAction = (
 
 export type DocAction = common.DocAction;
 
-export function isDataDocActionName(actionName: string): actionName is DataDocAction[0] {
+export function isDataDocActionName(actionName: string|unknown): actionName is DataDocAction[0] {
   switch (actionName) {
-    case 'AddRecord':
-    case 'RemoveRecord':
-    case 'UpdateRecord':
     case 'BulkAddRecord':
     case 'BulkRemoveRecord':
     case 'BulkUpdateRecord':

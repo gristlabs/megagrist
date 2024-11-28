@@ -39,6 +39,11 @@ export interface Query {
   cursor?: QueryCursor;     // Which value to start returning results from.
   columns?: string[];
   rowIds?: number[];
+
+  // When this is requested, results include a special column _grist_Previous, with the rowId of
+  // the previous row according to the given sort and filters, regardless of whether this previous
+  // row is included in rowIds.
+  includePrevious?: boolean;
 }
 
 export interface QueryResultCommon {

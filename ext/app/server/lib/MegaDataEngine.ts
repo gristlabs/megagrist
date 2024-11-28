@@ -18,6 +18,7 @@ import {appSettings} from 'app/server/lib/AppSettings';
 import {expandQuery} from 'app/server/lib/ExpandedQuery';
 import * as ICreate from 'app/server/lib/ICreate';
 import {OptDocSession} from 'app/server/lib/DocSession';
+import * as log from 'app/server/lib/log';
 
 
 const enableMegaDataEngine = appSettings.section('dataEngine').flag('enableMega').readBool({
@@ -31,6 +32,10 @@ export function getSupportedEngineChoices(): EngineCode[]|undefined {
     return base;
   }
   return [...base || ['python3'], MEGA_ENGINE];
+}
+
+function logDebug(x: unknown, ...args: unknown[]) {
+  log.debug(String(x), ...args);
 }
 
 export class MegaDataEngine {
@@ -47,7 +52,7 @@ export class MegaDataEngine {
   private _dataEngine: DataEnginePooled;
 
   constructor(dbPath: string, docData: DocData) {
-    this._dataEngine = new UnmarshallingDataEngine(docData, dbPath, {verbose: console.log});
+    this._dataEngine = new UnmarshallingDataEngine(docData, dbPath, {verbose: logDebug});
     // db.exec("PRAGMA journal_mode=WAL");  <-- TODO we want this, but leaving for later.
   }
 
@@ -61,7 +66,7 @@ export class MegaDataEngine {
   }
 
   public serve(channel: WebSocketChannel): void {
-    createDataEngineServer(this._dataEngine, {channel, verbose: console.log});
+    createDataEngineServer(this._dataEngine, {channel, verbose: logDebug});
   }
 }
 
@@ -77,6 +82,9 @@ class UnmarshallingDataEngine extends DataEnginePooled {
   public async fetchQueryStreaming(
     context: DataEngineCallContext, query: Query, options: QueryStreamingOptions
   ): Promise<QueryResultStreaming> {
+
+    // TODO ugh, this is only for fetchQueryStreaming??? What about fetchQuery? We should leave
+    // only one method in the interface that's the best of both.
 
     // We use the metadata about the table to get the grist types of columns, which determine how
     // to decode values.

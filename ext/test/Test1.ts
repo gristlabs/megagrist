@@ -49,7 +49,7 @@ describe('Test1', function() {
     // Run query to read this table.
     const result2 = await withTiming(`${desc}: query table 10k`, () => {
       const filters: QueryFilters = ['GtE', ['Name', 'Age'], ['Const', 99]];
-      return dataEngine.fetchQuery({tableId: 'Table1', filters});
+      return dataEngine.fetchQuery({}, {tableId: 'Table1', filters});
     });
     assert.lengthOf(result2.tableData.id, 10000);
     assert.isTrue(result2.tableData.Age.every(age => (age === 99)));
@@ -59,7 +59,7 @@ describe('Test1', function() {
       let cursor: QueryCursor|undefined;
       let prevResult: QueryResult|undefined;
       while (true) {    // eslint-disable-line no-constant-condition
-        const result = await dataEngine.fetchQuery({tableId: 'Table1', sort: ['id'], cursor, limit: 1000});
+        const result = await dataEngine.fetchQuery({}, {tableId: 'Table1', sort: ['id'], cursor, limit: 1000});
         if (!result.tableData.id.length) {
           break;
         }

@@ -1,4 +1,5 @@
-import {BulkColValues, DocAction} from './DocActions';
+import {BulkColValues, DocAction, isDataDocActionName} from './DocActions';
+import {isSchemaAction} from './DocActions';
 import {getSqlTypeInfo, quoteIdent} from './sqlUtil';
 import SqliteDatabase from 'better-sqlite3';
 
@@ -16,7 +17,12 @@ export class StoreDocAction {
   constructor(private _db: SqliteDatabase.Database) {}
 
   public store(action: DocAction) {
-    return this[action[0]](action as any);
+    if (isSchemaAction(action)) {
+      return this[action[0]](action as any);
+    } else if (isDataDocActionName(action[0])) {
+      return this[action[0]](action as any);
+    }
+    throw new Error(`Unsupported action type: ${action[0]}`);
   }
 
   // TODO For all data operations, including UPDATE, there are ways to deal with multiple rows
@@ -32,7 +38,6 @@ export class StoreDocAction {
   // A neat alternative is virtual table, made easy by better-sqlite3's table() function. This
   // allows a single statement for any number of rows, without batching! Includes other overhead
   // though, so performance is TBD.
-
 
   public BulkAddRecord([_, tableId, rowIds, colValues]: DocAction.BulkAddRecord) {
     if (rowIds.length === 0) { return; }

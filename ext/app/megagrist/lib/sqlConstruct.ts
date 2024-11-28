@@ -43,15 +43,44 @@ export class BindParams {
  * Construct SQL from the given query.
  */
 export function sqlSelectFromQuery(query: ExpandedQuery, params: BindParams): string {
+  return query.includePrevious ?
+    sqlSelectWithPrevious(query, params) :
+    sqlSelectNormal(query, params);
+}
+
+function sqlSelectNormal(query: ExpandedQuery, params: BindParams): string {
   const namePrefix = `${quoteIdent(query.tableId)}.`;
   const conditions = sqlSelectConditionsFromQuery(namePrefix, query, params);
   const joinClauses = query.joins ? query.joins.join(' ') : '';
-  const selects = (
-    query.selects ? query.selects.join(', ') :
-    query.columns ? query.columns.map(c => quoteIdent(c)).join(", ") :
-    '*');
+  const selects = getSelects(namePrefix, query).join(", ");
   return `SELECT ${selects} FROM ${quoteIdent(query.tableId)} ${joinClauses} ${conditions}`;
 }
+
+function getSelects(namePrefix: string, query: ExpandedQuery): string[] {
+  return query.selects ||
+    query.columns?.map(c => namePrefix + quoteIdent(c)) ||
+    [namePrefix + '*'];
+}
+
+function sqlSelectWithPrevious(query: ExpandedQuery, params: BindParams): string {
+  // This happens to be an order of magnitude faser than sqlSelectWithPrevious1, which uses the
+  // LAG window function. This surprises me.
+  const namePrefix = `${quoteIdent(query.tableId)}.`;
+  const selects = [...getSelects(namePrefix, query), '_prev_.id AS _grist_Previous'];
+  const joins = [...(query.joins || []),
+    `LEFT JOIN ${quoteIdent(query.tableId)} AS _prev_
+      ON _prev_.id = (
+        SELECT id FROM ${quoteIdent(query.tableId)} AS _tmp_
+        WHERE (${sqlSortedBefore(query.sort, "_tmp_", quoteIdent(query.tableId))})
+        ORDER BY ${sqlOrderByFromSort("_tmp_.", query.sort, {reverse: true})}
+        LIMIT 1
+      )
+    `
+  ];
+  const adjustedQuery: ExpandedQuery = {...query, selects, joins};
+  return sqlSelectNormal(adjustedQuery, params);
+}
+
 
 /**
  * Construct just the portion of SQL starting with WHERE, i.e. all conditions including ORDER BY
@@ -105,7 +134,7 @@ function sqlExprFromFilters(namePrefix: string, filters: ParsedPredicateFormula,
       case 'In':    return combine(args, 2, ([a, b]) => `${a} IN ${b}`);
       case 'NotIn': return combine(args, 2, ([a, b]) => `${a} NOT IN ${b}`);
       case 'List':  return combine(args, null, parts => parts.join(', '));
-      case 'Const': return params.addParam(node[1]);
+      case 'Const': return params.addParam(node[1] as CellValue);
       case 'Name':  return namePrefix + quoteIdent(node[1] as string);
       case 'Attr':  throw new Error('Attr not supported in filters');
       case 'Comment': return compileNode(args[0]);
@@ -115,17 +144,18 @@ function sqlExprFromFilters(namePrefix: string, filters: ParsedPredicateFormula,
   return compileNode(filters);
 }
 
-function sqlOrderByFromSort(namePrefix: string, sort: OrderByClause|undefined): string {
+function sqlOrderByFromSort(namePrefix: string, sort: OrderByClause|undefined, options?: {reverse?: boolean}): string {
+  const normalOrder = !options?.reverse;
   const parts: string[] = [];
   if (sort) {
     for (const colSpec of sort) {
       const isDesc = colSpec.startsWith('-');
       const colId = isDesc ? colSpec.slice(1) : colSpec;
       const fullColId = namePrefix + quoteIdent(colId);
-      parts.push(`${fullColId} ${isDesc ? 'DESC NULLS FIRST' : 'ASC NULLS LAST'}`);
+      parts.push(`${fullColId} ${isDesc === normalOrder ? 'DESC NULLS FIRST' : 'ASC NULLS LAST'}`);
     }
   }
-  parts.push(namePrefix + 'id');
+  parts.push(namePrefix + 'id' + (normalOrder ? '' : ' DESC'));
   return parts.join(', ');
 }
 
@@ -151,7 +181,29 @@ function sqlExprFromCursor(
     const fullColId = namePrefix + quoteIdent(colId);
     const op = isDesc ? '<' : '>';
     const p = params.addParam(cursorValues[index]);
+    // TODO does this need support for NULLS FIRST / NULLS LAST?
     return `${fullColId} ${op} ${p}` + (next ? ` OR (${fullColId} = ${p} AND (${next}))` : '');
+  }
+  return compileNode(0);
+}
+
+function sqlSortedBefore(sort: OrderByClause|undefined, scope1: string, scope2: string) {
+  const colSpecs = sort ? [...sort, 'id'] : ['id'];
+  const count = colSpecs.length;
+  function compileNode(index: number): string {
+    if (index >= count) {
+      return 'FALSE';
+    }
+    const next = (index + 1 < count) ? compileNode(index + 1) : null;
+    const colSpec = colSpecs[index];
+    const isDesc = colSpec.startsWith('-');
+    const colId = isDesc ? colSpec.slice(1) : colSpec;
+    const c = quoteIdent(colId);
+    const c1 = `${scope1}.${c}`;
+    const c2 = `${scope2}.${c}`;
+    const op = isDesc ? '>' : '<';
+    // TODO does this need support for NULLS FIRST / NULLS LAST?
+    return `${c1} ${op} ${c2}` + (next ? ` OR (${c1} = ${c2} AND (${next}))` : '');
   }
   return compileNode(0);
 }

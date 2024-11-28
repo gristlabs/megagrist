@@ -39,10 +39,12 @@ export interface Query {
   cursor?: QueryCursor;     // Which value to start returning results from.
   columns?: string[];
   rowIds?: number[];
-}
 
-// Identifier for a subscription, which can be used to unsubscribe.
-export type QuerySubId = number;
+  // When this is requested, results include a special column _grist_Previous, with the rowId of
+  // the previous row according to the given sort and filters, regardless of whether this previous
+  // row is included in rowIds.
+  includePrevious?: boolean;
+}
 
 export interface QueryResultCommon {
   tableId: string;
@@ -50,9 +52,6 @@ export interface QueryResultCommon {
   // Each state of the database is identified by an actionNum. Each change increments it. (Some
   // merged changes may increment it by more than 1.)
   actionNum: number;
-
-  // If subscribed at the same time, the result may include a subscription ID.
-  subId?: QuerySubId;
 
   // It may also be appropriate to include attachment metadata referred to in tableData.
   // attachments?: TableColValues;

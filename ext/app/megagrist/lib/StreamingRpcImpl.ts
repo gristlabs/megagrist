@@ -44,11 +44,8 @@ export class StreamingRpcImpl implements StreamingRpc {
     this._options = options;
     options.channel.onmessage = this.dispatch.bind(this);
 
-    const disconnectHandler = () => {
-      this._onDisconnect(this.disconnectSignal.reason as Error);
-      this.disconnectSignal.removeEventListener('abort', disconnectHandler);
-    };
-    this.disconnectSignal.addEventListener('abort', disconnectHandler);
+    const disconnectHandler = () => this._onDisconnect(this.disconnectSignal.reason as Error);
+    this.disconnectSignal.addEventListener('abort', disconnectHandler, {once: true});
   }
 
   public get disconnectSignal() {

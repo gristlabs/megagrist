@@ -1,15 +1,37 @@
-import {ActionSet, ApplyResultSet, Query, QueryResult, QueryResultStreaming, QuerySubId} from './types';
-import {CellValue} from './DocActions';
-import {IDataEngine, QueryStreamingOptions, QuerySubCallback} from './IDataEngine';
+import {ActionSet, ApplyResultSet, QueryResult, QueryResultStreaming} from './types';
+import {CellValue, DocAction, isDataDocAction} from './DocActions';
+import {IDataEngine, QueryStreamingOptions} from './IDataEngine';
 import {BindParams, ExpandedQuery, sqlSelectFromQuery} from './sqlConstruct';
 import {StoreDocAction} from './StoreDocAction';
 import SqliteDatabase from 'better-sqlite3';
+import {Emitter} from 'grainjs';
 
-abstract class BaseDataEngine implements IDataEngine {
-  private _querySubs = new Map<number, Query>();
-  private _nextQuerySub = 1;
+export const Deps = {
+  // Actions affecting more than this many rows will get stripped (leaving the work of fetching
+  // details to the client).
+  MAX_SMALL_ACTION_ROW_IDS: 100,
+}
 
-  public async fetchQuery(query: ExpandedQuery): Promise<QueryResult> {
+interface MinimalChannel {
+  disconnectSignal: AbortSignal;
+}
+
+interface Context {
+  // The important thing about channel is that it must be an object preserved for all calls on the
+  // same connection. It is used as a key in a WeakMap to keep track of the query subscriptions
+  // made by that connection.
+  channel?: MinimalChannel;
+
+  // Optionally, a call may include an AbortSignal, to allow it to abort a long-running operation.
+  abortSignal?: AbortSignal;
+}
+
+export type DataEngineCallContext = Context;
+
+abstract class BaseDataEngine implements IDataEngine<Context> {
+  private _actionSetEmitter = new Emitter();
+
+  public async fetchQuery(context: Context, query: ExpandedQuery): Promise<QueryResult> {
     const bindParams = new BindParams();
     const sql = sqlSelectFromQuery(query, bindParams);
     // console.warn("fetchQuery", sql, bindParams.getParams());
@@ -19,7 +41,7 @@ abstract class BaseDataEngine implements IDataEngine {
       // console.warn("RESULT", rows);
       const queryResult: QueryResult = {
         tableId: query.tableId,
-        tableData: {},
+        tableData: {id: []},
         actionNum: 0,       // TODO
       };
       for (const [index, col] of stmt.columns().entries()) {
@@ -30,8 +52,9 @@ abstract class BaseDataEngine implements IDataEngine {
   }
 
   public async fetchQueryStreaming(
-    query: ExpandedQuery, options: QueryStreamingOptions, abortSignal?: AbortSignal
+    context: Context, query: ExpandedQuery, options: QueryStreamingOptions
   ): Promise<QueryResultStreaming> {
+    const abortSignal = context?.abortSignal;
     const bindParams = new BindParams();
     const sql = sqlSelectFromQuery(query, bindParams);
     // console.warn("fetchQueryStreaming", sql, bindParams.getParams());
@@ -119,24 +142,7 @@ abstract class BaseDataEngine implements IDataEngine {
     }
   }
 
-  // See querySubscribe for requirements on unsubscribing.
-  public async fetchAndSubscribe(query: Query, callback: QuerySubCallback): Promise<QueryResult> {
-    const subId = this._doQuerySubscribe(query, callback);
-    const queryResult = await this.fetchQuery(query);
-    return {...queryResult, subId};
-  }
-
-  // If querySubscribe succeeds, the data engine is now maintaining a subscription. It is the
-  // caller's responsibility to release it with queryUnsubscribe(), once it is no longer needed.
-  public async querySubscribe(query: Query, callback: QuerySubCallback): Promise<QuerySubId> {
-    return this._doQuerySubscribe(query, callback);
-  }
-
-  public async queryUnsubscribe(subId: QuerySubId): Promise<boolean> {
-    return this._querySubs.delete(subId);
-  }
-
-  public async applyActions(actionSet: ActionSet): Promise<ApplyResultSet> {
+  public async applyActions(context: Context, actionSet: ActionSet): Promise<ApplyResultSet> {
     return this.withDB((db) => db.transaction((): ApplyResultSet => {
       // TODO: In the future, we need to pass actionSet through Access Rules,
       // Data Engine (to trigger anything synchronous), Access Rules again, all within a
@@ -148,13 +154,22 @@ abstract class BaseDataEngine implements IDataEngine {
       for (const action of actionSet.actions) {
         results.push(storeDocAction.store(action));
       }
-      // TODO For each subscription, query and queue the data to send to it.
-      // NOTE: We could use a separate DB connection with an open read transaction to avoid
-      // keeping the write transaction open; consider it if needed for performance.
-      // (Efficient subscriptions are their own project, not done yet.)
 
+      // Emit actions, which every listener (who called addActionListeners) will get. We strip
+      // down large actions; caller will know to re-fetch parts in that case.
+      // TODO actions we emit need to be filtered by Access Rules for each recipient. (After
+      // stripping, all actions should be small, so filtering should be fast.)
+      const actionsToEmit: DocAction[] = actionSet.actions.map(a => maybeStripAction(a));
+      this._actionSetEmitter.emit({actions: actionsToEmit});
       return {results};
     }).immediate());
+  }
+
+  // Adds a callback to be called when any change happens in the document.
+  public addActionListener(context: Context, callback: (actionSet: ActionSet) => void) {
+    const listener = this._actionSetEmitter.addListener(callback);
+    context.channel?.disconnectSignal.addEventListener('abort', () => listener.dispose(), {once: true});
+    return listener;
   }
 
   protected abstract acquireDB(): SqliteDatabase.Database;
@@ -170,12 +185,6 @@ abstract class BaseDataEngine implements IDataEngine {
     } finally {
       this.releaseDB(db);
     }
-  }
-
-  private _doQuerySubscribe(query: Query, callback: QuerySubCallback): QuerySubId {
-    const subId = this._nextQuerySub++;
-    this._querySubs.set(subId, query);
-    return subId;
   }
 }
 
@@ -224,4 +233,19 @@ export class DataEnginePooled extends BaseDataEngine {
 declare var AbortSignal: typeof globalThis.AbortSignal & {
   timeout(milliseconds: number): AbortSignal;
   any(signals: AbortSignal[]): AbortSignal;
+}
+
+function maybeStripAction(action: DocAction): DocAction {
+  if (isDataDocAction(action)) {
+    const [actionName, tableId, rowIds, colValues] = action;
+    if (rowIds.length > Deps.MAX_SMALL_ACTION_ROW_IDS) {
+      if (actionName === "BulkRemoveRecord") {
+        return [actionName, tableId, []];
+      } else {    // Typescript knows action is one of the remaining *Data* DocActions.
+        const newColValues = Object.fromEntries(Object.entries(colValues).map(([k, v]) => [k, []]));
+        return [actionName, tableId, [], newColValues];
+      }
+    }
+  }
+  return action;
 }

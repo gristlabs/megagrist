@@ -1,25 +1,30 @@
+// TODO darn, linting with typings isn't working in my editor in this directory :(
 import type {GristWSConnection} from 'app/client/components/GristWSConnection';
 import koArray, {KoArray} from 'app/client/lib/koArray';
+import {DocData} from 'app/client/models/DocData';
 import {DataRowModel} from 'app/client/models/DataRowModel';
 import {reportError} from 'app/client/models/errors';
 import {ISortedRowSet, RowList, RowSource} from 'app/client/models/rowset';
+import * as rowset from 'app/client/models/rowset';
 import {FilterColValues, QueryOperation} from 'app/common/ActiveDocAPI';
 import {delay} from 'app/common/delay';
 import {DisposableWithEvents} from 'app/common/DisposableWithEvents';
-import {CellValue, TableColValues, toTableDataAction} from 'app/common/DocActions';
+import {CellValue, DocAction, TableColValues, toTableDataAction} from 'app/common/DocActions';
 import {isMegaEngineEnabled} from 'app/common/MegaEngineSettings';
 import type {MinimalWebSocket} from 'app/common/MinimalWebSocket';
 import type {GristLoadConfig} from 'app/common/gristUrls';
 import type {CompareFunc} from 'app/common/gutil';
-import type {Sort} from 'app/common/SortSpec';
+import {Sort} from 'app/common/SortSpec';
 import type {TableData} from 'app/client/models/TableData';
+import {isDataDocAction} from 'app/megagrist/lib/DocActions';
 import type {ParsedPredicateFormula, Query} from 'app/megagrist/lib/types';
-import type {IDataEngine} from 'app/megagrist/lib/IDataEngine';
 import type {UIRowId} from 'app/plugin/GristAPI';
 import {WebSocketChannel} from 'app/megagrist/lib/WebSocketChannel';
-import {DataEngineClient} from 'app/megagrist/lib/DataEngineClient';
-import type {IDisposableOwner} from 'grainjs';
+import {DataEngineClient, IDataEngineCli} from 'app/megagrist/lib/DataEngineClient';
+import {Emitter, IDisposableOwner} from 'grainjs';
 import assert from 'assert';
+
+type IDataEngine = IDataEngineCli;
 
 export class MegaDocModel {
   public static isEnabled(engine?: string): boolean {
@@ -27,25 +32,29 @@ export class MegaDocModel {
     return isMegaEngineEnabled(engine, gristConfig?.supportEngines);
   }
 
-  public static maybeCreate(conn: GristWSConnection, engine?: string): MegaDocModel|null {
+  public static maybeCreate(conn: GristWSConnection, docData: DocData): MegaDocModel|null {
+    const engine = docData.docSettings().engine;
     if (!this.isEnabled(engine)) {
       return null;
     }
-    const megaDataModel = new MegaDocModel();
+    const megaDocModel = new MegaDocModel(docData);
     const socket = conn.getAuxSocket();
     if (socket) {
-      megaDataModel._initDataEngineWithSocket(socket);
+      megaDocModel._initDataEngineWithSocket(socket);
     } else {
       const onConnected = () => {
         conn.off('connectState', onConnected);
-        megaDataModel._initDataEngineWithSocket(conn.getAuxSocket()!);
+        megaDocModel._initDataEngineWithSocket(conn.getAuxSocket()!);
       };
       conn.on('connectState', onConnected);
     }
-    return megaDataModel;
+    return megaDocModel;
   }
 
   private _dataEngine: IDataEngine|null = null;
+  private _tableEmitters = new WeakMap<TableData, Emitter>();
+
+  constructor(private _docData: DocData) {}
 
   public createSortedRowSet(owner: IDisposableOwner, tableData: TableData, columns: TableData): ISortedRowSet {
     return MegaRowSet.create(owner, this, tableData, columns);
@@ -54,15 +63,25 @@ export class MegaDocModel {
   public getRowModelClass(rowSet: MegaRowSet): typeof DataRowModel{
     return class MegaRowModel extends DataRowModel {
       public assign(rowId: number|'new'|null) {
-        super.assign(rowId);
+        this._withLoadedRow(rowId, () => super.assign(rowId), {eager: true});
+      }
+      protected _assignColumn(colName: string) {
+        this._withLoadedRow(this.getRowId(), () => super._assignColumn(colName), {eager: false});
+      }
+
+      // Eager says to also call the callback before waiting for the row to load.
+      private async _withLoadedRow(rowId: number|'new'|null, callback: () => void, options: {eager: boolean}) {
         const p: true|Promise<void> = rowSet.loadRow(rowId);
-        if (p !== true) {
-          p.then(() => {
-            // Check that this rowModel is still active and still for the row we loaded.
-            if (this.getRowId() === rowId && !this.isDisposed()) {
-              super.assign(rowId);
-            }
-          }, () => {});
+        if (p === true) {
+          callback();
+        } else {
+          if (options.eager) {
+            callback();
+          }
+          await p;
+          if (this.getRowId() === rowId && !this.isDisposed()) {
+            callback();
+          }
         }
       }
     };
@@ -75,9 +94,26 @@ export class MegaDocModel {
     return this._dataEngine;
   }
 
+  public getTableEmitter(tableData: TableData): Emitter {
+    let emitter = this._tableEmitters.get(tableData);
+    if (!emitter) {
+      emitter = new Emitter();
+      this._tableEmitters.set(tableData, emitter);
+    }
+    return emitter;
+  }
+
   private _initDataEngineWithSocket(socket: MinimalWebSocket) {
     const channel = new WebSocketChannel(socket);
     this._dataEngine = new DataEngineClient({channel, verbose: console.log});
+    this._dataEngine.addActionListener({}, (actions) => {
+      console.warn("GOT ACTIONS", actions.actions);
+      for (const action of actions.actions) {
+        const tableId = action[1];
+        const tableData = this._docData.getTable(tableId);
+        if (tableData) { this.getTableEmitter(tableData).emit(action); }
+      }
+    });
   }
 }
 
@@ -100,6 +136,7 @@ class MegaRowSet extends DisposableWithEvents implements ISortedRowSet {
   constructor(private _megaDocModel: MegaDocModel, private _tableData: TableData, private _columns: TableData) {
     super();
     this._koArray = this.autoDispose(koArray<UIRowId>());
+    this.autoDispose(_megaDocModel.getTableEmitter(_tableData)?.addListener(this._onAction.bind(this)));
   }
 
   public loadRow(rowId: number|'new'|null): true|Promise<void> {
@@ -128,12 +165,134 @@ class MegaRowSet extends DisposableWithEvents implements ISortedRowSet {
   public onRemoveRows(rows: RowList) { this._rebuildRowSet(); }
   public onUpdateRows(rows: RowList) { this._rebuildRowSet(); }
 
+  private _getColIdsAffectingRowSet(): Set<string> {
+    const colIds = new Set<string>();
+    for (const colSpec of this._sortSpec) {
+      const colRef = Sort.getColRef(colSpec);
+      if (typeof colRef === 'number') {
+        const colId = this._columns.getValue(colRef, 'colId');
+        if (colId && typeof colId === 'string') {
+          colIds.add(colId);
+        }
+      }
+    }
+    for (const colId of Object.keys(this._filterSpec)) {
+      colIds.add(colId);
+    }
+    return colIds;
+  }
+
+  // Check if we can skip updating the rowset, i.e. the filtered and ordered list of rowIds.
+  private _canSkipRowSetUpdate(action: DocAction) {
+    if (action[0] === "BulkUpdateRecord") {
+      const colValues = action[3];
+      const colIds = Object.keys(colValues);
+      const relevantColIds = this._getColIdsAffectingRowSet();
+      // If none of the columns is relevant to sort or filters, then can skip updating rowset.
+      if (!colIds.some(c => relevantColIds.has(c))) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private _onAction(action: DocAction) {
+    console.warn("GOT ACTION!", action);
+
+    if (!isDataDocAction(action)) {
+      throw new Error("We don't expect non-data actions through megagrist channel yet");
+    }
+
+    if (this._canSkipRowSetUpdate(action)) {
+      console.warn("Action does not affect sort or filters");
+    } else {
+      const rowIds = action[2];
+      if (rowIds.length > 0) {
+        // Normal action, used for small changes.
+        // TODO: this fetch may be interleaved with _rebuildRowSet() (e.g. due to linking
+        // changes). Need clarity of which version of what we have.
+        this._updateRowSet(rowIds);
+      } else {
+        // Stripped action, used for large changes. Rowset needs to be re-fetched.
+        this._rebuildRowSet();
+      }
+    }
+
+    // TODO For actions like Add, tableData.receiveAction() may not be the right thing (may add rows we
+    // don't care to load; but also, that may be fine).
+    if (action[0] == "BulkUpdateRecord") {
+      const rowIds = action[2];
+      if (rowIds.length > 0) {
+        // Normal action, used for small changes. We can take values directly from the action.
+
+        // Get the action applied to TableData. This triggers other events, but we, as the rowset,
+        // don't listen to them (to skip unnecessary work), and emit the needed event manually.
+        // Action may include rows not loaded; those should get ignored by TableData and
+        // LazyArrayModel respectively.
+        this._tableData.receiveAction(action);
+        this.trigger('rowNotify', rowIds, action);
+      } else {
+        // Stripped action, used for large changes. We have to re-fetch all rows we care about. We
+        // do it by invalidating all loaded rows and telling the "models" (LazyArrayModel &
+        // RowModel instances) that the action applies to all rows. It so happens that
+        // BaseRowModel pays attention to which columns changed but doesn't mind that rowIds list
+        // is empty, so calls _assignColumn which does the right thing.
+        this._rowFetcher.clearLoaded();
+        this.trigger('rowNotify', rowset.ALL, action);
+      }
+    }
+  }
+
+  private async _updateRowSet(rowIds: number[]) {
+    const query = this._buildQuery();
+    query.rowIds = rowIds;
+    query.includePrevious = true;
+
+    const dataEngine = this._megaDocModel.dataEngine;
+    // TODO small streaming calls wastefully reply with 3 messages instead of 1, but some stuff
+    // (like on-demand formula expansions) were only added to the streaming version. Idea: keep a
+    // single call in the interface (streaming), and make it not wasteful for small responses.
+    const result = await dataEngine.fetchQueryStreaming({}, query, {timeoutMs: 60000, chunkRows: 10000});
+
+    // What we get in this response is a list of pairs [rowId, previousRowId], one for each rowId
+    // provided. We use this to rebuild the rowset in this._koArray, with the affected rows moved
+    // into their correct positions. TODO this got the least of manual testing for reordering, and
+    // none for adding/deleting. Unlikely to work correctly for those cases.
+    const previousToRowId = new Map();
+    const movedRowIds = new Set();
+    for await (const chunk of result.chunks) {
+      for (const row of chunk) {
+        previousToRowId.set(row[1], row[0]);
+        movedRowIds.add(row[0]);
+      }
+    }
+    if (this.isDisposed()) { return; }
+    const newRowIds: UIRowId[] = [];
+
+    function addFollowing(rowId: UIRowId|null) {
+      while (previousToRowId.has(rowId)) {
+        const nextRowId = previousToRowId.get(rowId);
+        newRowIds.push(nextRowId);
+        rowId = nextRowId;
+      }
+    }
+    addFollowing(null);
+    for (let rowId of this._koArray.peek()) {
+      if (movedRowIds.has(rowId)) {
+        continue;
+      }
+      newRowIds.push(rowId);
+      addFollowing(rowId);
+    }
+    this._koArray.assign(newRowIds);
+  }
+
   private _onError(err: Error|unknown) {
     if (err instanceof Error && err.message?.includes('aborted')) { return; }
     alert(err);
   }
 
-  private async _doRebuildRowSet(abortController: AbortController) {
+  private _buildQuery(): Query {
     // TODO: this translation doesn't (yet) support full SortSpec.
     const sort = [];
     for (const c of this._sortSpec) {
@@ -145,17 +304,20 @@ class MegaRowSet extends DisposableWithEvents implements ISortedRowSet {
     }
 
     const filters = getLinkingFiltersAsPredicate(this._filterSpec) || ['Const', 1];
-    const query: Query = {
+    return {
       tableId: this._tableData.tableId,
       sort,
       filters,
       columns: ['id'],
     };
+  }
 
+
+  private async _doRebuildRowSet(abortController: AbortController) {
+    const query: Query = this._buildQuery();
     const dataEngine = this._megaDocModel.dataEngine;
-    // TODO: fetchQueryStreaming must take abortSignal, and stop sending data when aborted.
     const abortSignal = abortController.signal;
-    const result = await dataEngine.fetchQueryStreaming(query, {timeoutMs: 60000, chunkRows: 10000}, abortSignal);
+    const result = await dataEngine.fetchQueryStreaming({abortSignal}, query, {timeoutMs: 60000, chunkRows: 10000});
     console.warn("GOT COLIDS", result.value.colIds);
     if (this.isDisposed()) { abortController.abort(); }
     abortSignal.throwIfAborted();
@@ -174,6 +336,7 @@ class MegaRowSet extends DisposableWithEvents implements ISortedRowSet {
     }
     this._tableData.dataLoadedEmitter.emit([], []);
     this._doRebuildRowSetFinish();
+    console.warn("TABLEDATA", this._tableData);
   }
 
   private _doRebuildRowSetFinish(err?: Error|unknown) {
@@ -194,7 +357,7 @@ class MegaRowSet extends DisposableWithEvents implements ISortedRowSet {
 
     console.warn("Query", query);
     const dataEngine = this._megaDocModel.dataEngine;
-    const result = await dataEngine.fetchQueryStreaming(query, {timeoutMs: 60000, chunkRows: 500});
+    const result = await dataEngine.fetchQueryStreaming({}, query, {timeoutMs: 60000, chunkRows: 500});
 
     for await (const chunk of result.chunks) {
       const colValues: TableColValues = {id: []};
@@ -269,6 +432,14 @@ class RowFetcher {
       this._addRowToQueue(rowId));
   }
 
+  public invalidate(rowId: number) {
+    this._loadedRows.delete(rowId);
+  }
+
+  public clearLoaded() {
+    this._loadedRows.clear();
+  }
+
   private _addRowToQueue(rowId: number) {
     const p = new Promise<void>((resolve) => {
       this._queuedCallbacks.push(resolve);
@@ -323,7 +494,7 @@ function getLinkingColFilterAsPredicate(
 ): ParsedPredicateFormula|null {
   if (operation === "in") {
     if (values.length > 0) {
-      return ['In', ['Name', colId], ['List', ...values.map(v => ['Const', v])]];
+      return ['In', ['Name', colId], ['List', ...values.map<ParsedPredicateFormula>(v => ['Const', v])]];
     } else {
       return ['Const', 0];
     }

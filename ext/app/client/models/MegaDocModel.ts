@@ -65,8 +65,8 @@ export class MegaDocModel {
       public assign(rowId: number|'new'|null) {
         this._withLoadedRow(rowId, () => super.assign(rowId), {eager: true});
       }
-      protected _assignColumn(colName: string) {
-        this._withLoadedRow(this.getRowId(), () => super._assignColumn(colName), {eager: false});
+      protected dispatchAction(action: DocAction) {
+        this._withLoadedRow(this.getRowId(), () => super.dispatchAction(action), {eager: false});
       }
 
       // Eager says to also call the callback before waiting for the row to load.

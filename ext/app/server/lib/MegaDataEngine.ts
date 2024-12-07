@@ -12,13 +12,15 @@ import {WebSocketChannel} from 'app/megagrist/lib/WebSocketChannel';
 import {DataEngineCallContext, DataEnginePooled} from 'app/megagrist/lib/DataEngine';
 import {createDataEngineServer} from 'app/megagrist/lib/DataEngineServer';
 import {QueryStreamingOptions} from 'app/megagrist/lib/IDataEngine';
-import {Query, QueryResultStreaming} from 'app/megagrist/lib/types';
+import {Query, QueryResult, QueryResultStreaming} from 'app/megagrist/lib/types';
 import {ExpandedQuery} from 'app/megagrist/lib/sqlConstruct';
 import {appSettings} from 'app/server/lib/AppSettings';
 import {expandQuery} from 'app/server/lib/ExpandedQuery';
 import * as ICreate from 'app/server/lib/ICreate';
 import {OptDocSession} from 'app/server/lib/DocSession';
 import * as log from 'app/server/lib/log';
+import * as path from 'path';
+import {realpathSync} from 'fs';
 
 
 const enableMegaDataEngine = appSettings.section('dataEngine').flag('enableMega').readBool({
@@ -68,6 +70,10 @@ export class MegaDataEngine {
   public serve(channel: WebSocketChannel): void {
     createDataEngineServer(this._dataEngine, {channel, verbose: logDebug});
   }
+
+  public getSandboxExtDir(): string {
+    return path.join(realpathSync(path.join(process.cwd(), '..', 'ext', 'sandbox', 'grist')));
+  }
 }
 
 export namespace MegaDataEngine {
@@ -77,6 +83,12 @@ export namespace MegaDataEngine {
 class UnmarshallingDataEngine extends DataEnginePooled {
   constructor(private _docData: DocData, ...args: ConstructorParameters<typeof DataEnginePooled>) {
     super(...args);
+  }
+
+  public async fetchQuery(context: DataEngineCallContext, query: Query): Promise<QueryResult> {
+    const queryResult = await super.fetchQuery(context, this._expandQuery(query));
+    // TODO: apply decoders, like fetchQueryStreaming() does.
+    return queryResult;
   }
 
   public async fetchQueryStreaming(
@@ -90,15 +102,7 @@ class UnmarshallingDataEngine extends DataEnginePooled {
     // to decode values.
     const tableData = this._docData.getTable(query.tableId)
 
-    let expandedQuery: ExpandedQuery;
-    if (query.columns) {
-      expandedQuery = query;
-    } else {
-      const expanded = expandQuery({tableId: query.tableId, filters: {}}, this._docData, true);
-      expandedQuery = {...query, joins: expanded.joins, selects: expanded.selects};
-    }
-
-    const queryResult = await super.fetchQueryStreaming(context, expandedQuery, options);
+    const queryResult = await super.fetchQueryStreaming(context, this._expandQuery(query), options);
     const decoders = queryResult.value.colIds.map(c => getDecoder(tableData?.getColType(c)));
 
     async function *generateRows() {
@@ -110,6 +114,15 @@ class UnmarshallingDataEngine extends DataEnginePooled {
       value: queryResult.value,
       chunks: generateRows()
     };
+  }
+
+  private _expandQuery(query: Query): ExpandedQuery {
+    if (query.columns) {
+      return query;
+    } else {
+      const expanded = expandQuery({tableId: query.tableId, filters: {}}, this._docData, true);
+      return {...query, joins: expanded.joins, selects: expanded.selects};
+    }
   }
 }
 

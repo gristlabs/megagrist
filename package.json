@@ -7,7 +7,8 @@
     "build": "cd core && yarn run build:prod",
     "build-docker": "docker buildx build --load -t gristlabs/megagrist --build-context=ext=ext core",
     "start": "cd core && sandbox/watch.sh",
-    "test": "cd core && mocha '_build/ext/test/**/*.js' ${DEBUG:+-b --no-exit} -g \"${GREP_TESTS}\" -n expose-gc"
+    "test": "cd core && mocha '_build/ext/test/**/*.js' ${DEBUG:+-b --no-exit} -g \"${GREP_TESTS}\" -n expose-gc",
+    "test:python": "cd core && PYTHONPATH=../ext/sandbox/grist yarn run test:python"
   },
   "keywords": [],
   "private": true,

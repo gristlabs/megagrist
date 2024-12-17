@@ -1,9 +1,11 @@
 import {ICreate} from "app/server/lib/ICreate";
 import {makeCoreCreator} from "app/server/lib/coreCreator";
 import {getSupportedEngineChoices} from 'app/server/lib/MegaDataEngine';
+import * as fs from 'fs';
 
 export const create: ICreate = makeCoreCreator({
-  getSupportedEngineChoices
+  getSupportedEngineChoices,
+  sandboxFlavor: (fs.existsSync('/usr/bin/sandbox-exec') ? 'macSandboxExec' : 'gvisor'),
 });
 
 /**
